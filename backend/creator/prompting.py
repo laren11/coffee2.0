@@ -17,13 +17,45 @@ VIDEO_STYLE_GUIDANCE = {
     ),
 }
 
+LANGUAGE_LABELS = {
+    "en": "English",
+    "sl": "Slovenian",
+    "hr": "Croatian",
+    "de": "German",
+    "it": "Italian",
+}
+
+VIDEO_ORIENTATION_GUIDANCE = {
+    "portrait": (
+        "Compose for a vertical 9:16 social-first frame. Keep the subject large in frame, "
+        "front-load the hook, and make the visuals feel premium on mobile."
+    ),
+    "landscape": (
+        "Compose for a widescreen 16:9 frame. Use cinematic lateral movement, polished "
+        "product staging, and balanced compositions that look premium on desktop and TV."
+    ),
+}
+
+VIDEO_SEQUENCE_GUIDANCE = {
+    "ugc": (
+        "Structure the video with a fast hook in the first 2 seconds, a relatable proof or "
+        "demo moment, a clear product interaction, and a satisfying closing payoff shot."
+    ),
+    "ad": (
+        "Structure the video like a premium ad: strong hero opener, dynamic benefit cutaways, "
+        "tasteful motion, persuasive product proof, and a clean final hero packshot."
+    ),
+}
+
 
 def build_generation_prompt(
     *,
     product: dict[str, Any],
     content_type: str,
     user_prompt: str,
+    language: str,
     video_style: str | None,
+    video_orientation: str | None,
     ugc_creator: dict[str, Any] | None,
     has_reference_images: bool,
 ) -> str:
@@ -55,14 +87,27 @@ def build_generation_prompt(
         "Avoid low-quality CGI, warped packaging, duplicate items, floating objects, random "
         "text overlays, subtitles, watermarks, or off-brand clutter."
     )
+    language_block = (
+        f"All spoken dialogue, captions, voiceover, and any on-screen CTA text must be in "
+        f"{LANGUAGE_LABELS.get(language, 'English')} only. If text appears, keep it short, "
+        "legible, premium, and conversion-focused."
+    )
+    user_brief_block = (
+        "Treat the user's custom brief as the highest-priority creative instruction and follow "
+        "it precisely unless it conflicts with packaging fidelity or safety constraints."
+    )
 
     if content_type == "image":
         style_block = (
             "Output a high-converting branded still image. Use product-ad photography, "
             "editorial composition, strong focal hierarchy, and social-ready framing."
         )
+        orientation_block = ""
+        sequence_block = ""
     else:
         style_block = VIDEO_STYLE_GUIDANCE[video_style or "ad"]
+        orientation_block = VIDEO_ORIENTATION_GUIDANCE[video_orientation or "portrait"]
+        sequence_block = VIDEO_SEQUENCE_GUIDANCE[video_style or "ad"]
 
     creator_block = ""
     if video_style == "ugc" and ugc_creator:
@@ -79,7 +124,11 @@ def build_generation_prompt(
             product_context,
             fidelity_instruction,
             style_block,
+            orientation_block,
+            sequence_block,
             creator_block,
+            language_block,
+            user_brief_block,
             shared_quality_bar,
             f"Creative brief from the user: {user_prompt.strip()}",
         ]

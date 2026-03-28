@@ -17,6 +17,19 @@ export type VideoStyle = {
   description: string
 }
 
+export type LanguageOption = {
+  id: 'en' | 'sl' | 'hr' | 'de' | 'it'
+  label: string
+  native_label: string
+}
+
+export type VideoOrientation = {
+  id: 'portrait' | 'landscape'
+  label: string
+  aspect_ratio: '9:16' | '16:9'
+  description: string
+}
+
 export type UgcCreator = {
   id: string
   name: string
@@ -32,6 +45,8 @@ export type CatalogResponse = {
     imageAspectRatios: string[]
     videoAspectRatios: string[]
     videoStyles: VideoStyle[]
+    languages: LanguageOption[]
+    videoOrientations: VideoOrientation[]
     ugcCreators: UgcCreator[]
   }
 }
@@ -40,7 +55,9 @@ export type SubmitGenerationPayload = {
   token: string
   productId: string
   contentType: 'image' | 'video'
+  language: LanguageOption['id']
   videoStyle: '' | 'ugc' | 'ad'
+  videoOrientation: '' | VideoOrientation['id']
   ugcCreatorId: string
   prompt: string
   aspectRatio: string

@@ -20,7 +20,9 @@ class PromptingTests(SimpleTestCase):
             },
             content_type="video",
             user_prompt="A quick creator testimonial in a bright kitchen.",
+            language="sl",
             video_style="ugc",
+            video_orientation="portrait",
             ugc_creator={
                 "name": "High-Energy Founder",
                 "description": "Confident creator persona.",
@@ -32,6 +34,7 @@ class PromptingTests(SimpleTestCase):
         self.assertIn("Preserve the exact packaging", prompt)
         self.assertIn("creator-made UGC", prompt)
         self.assertIn("High-Energy Founder", prompt)
+        self.assertIn("Slovenian", prompt)
 
 
 class ApiTests(TestCase):
@@ -68,6 +71,7 @@ class ApiTests(TestCase):
                 "product_id": "coffee-2-0",
                 "content_type": "image",
                 "prompt": "Premium coffee hero ad.",
+                "language": "en",
                 "aspect_ratio": "1:1",
             },
             **self.auth_headers,
@@ -93,3 +97,11 @@ class ApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["state"], "completed")
+
+    def test_catalog_exposes_languages_and_video_orientations(self):
+        response = self.client.get("/api/products/", **self.auth_headers)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("languages", payload["generation_options"])
+        self.assertIn("videoOrientations", payload["generation_options"])

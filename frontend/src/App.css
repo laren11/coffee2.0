@@ -89,7 +89,9 @@
 .product-tagline,
 .toggle-card small,
 .upload-card small,
-.status-header small {
+.status-header small,
+.helper-text,
+.brief-meta {
   color: var(--muted);
 }
 
@@ -283,6 +285,10 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.compact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .choice-card {
   padding: 14px 16px;
   text-align: left;
@@ -295,6 +301,11 @@ textarea {
 .choice-card small {
   color: inherit;
   opacity: 0.75;
+}
+
+.helper-text {
+  margin: 0;
+  font-size: 0.9rem;
 }
 
 .toggle-card,
@@ -397,6 +408,19 @@ textarea:focus,
 .status-card,
 .result-card {
   padding: 18px;
+}
+
+.brief-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.brief-meta span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(61, 45, 38, 0.08);
 }
 
 .status-header {
@@ -542,6 +566,10 @@ textarea:focus,
   }
 
   .choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-grid {
     grid-template-columns: 1fr;
   }
 }

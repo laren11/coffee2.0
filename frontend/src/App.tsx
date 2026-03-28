@@ -23,8 +23,10 @@ import type {
   CatalogResponse,
   GeneratedAsset,
   GenerationStatusResponse,
+  LanguageOption,
   Product,
   UgcCreator,
+  VideoOrientation,
   VideoStyle,
 } from './types'
 
@@ -64,6 +66,27 @@ const FALLBACK_CATALOG: CatalogResponse = {
         description: 'Polished, commercial-style branded content.',
       },
     ],
+    languages: [
+      { id: 'en', label: 'English', native_label: 'English' },
+      { id: 'sl', label: 'Slovenian', native_label: 'Slovenscina' },
+      { id: 'hr', label: 'Croatian', native_label: 'Hrvatski' },
+      { id: 'de', label: 'German', native_label: 'Deutsch' },
+      { id: 'it', label: 'Italian', native_label: 'Italiano' },
+    ],
+    videoOrientations: [
+      {
+        id: 'portrait',
+        label: 'Portrait',
+        aspect_ratio: '9:16',
+        description: 'Best for Reels, TikTok, Stories, and paid social.',
+      },
+      {
+        id: 'landscape',
+        label: 'Landscape',
+        aspect_ratio: '16:9',
+        description: 'Best for widescreen ads, YouTube, and landing pages.',
+      },
+    ],
     ugcCreators: [],
   },
 }
@@ -81,12 +104,16 @@ function App() {
   const [catalogError, setCatalogError] = useState('')
   const [selectedProductId, setSelectedProductId] = useState('')
   const [contentType, setContentType] = useState<ContentType>('image')
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageOption['id']>('en')
   const [videoStyle, setVideoStyle] = useState<'' | 'ugc' | 'ad'>('ugc')
+  const [videoOrientation, setVideoOrientation] = useState<'' | VideoOrientation['id']>(
+    'portrait',
+  )
   const [selectedUgcCreatorId, setSelectedUgcCreatorId] = useState('')
-  const [aspectRatio, setAspectRatio] = useState('1:1')
+  const [imageAspectRatio, setImageAspectRatio] = useState('1:1')
   const [includeAudio, setIncludeAudio] = useState(false)
   const [prompt, setPrompt] = useState(
-    'Create a premium social ad focused on the product benefits and Coffee 2.0 brand feel.',
+    'Create a premium social ad focused on the product benefits, product shots, and a strong opening hook.',
   )
   const [referenceImages, setReferenceImages] = useState<File[]>([])
   const [phase, setPhase] = useState<GenerationPhase>('idle')
@@ -103,11 +130,16 @@ function App() {
   const selectedUgcCreator = catalog.generation_options.ugcCreators.find(
     (creator) => creator.id === selectedUgcCreatorId,
   )
-  const availableAspectRatios =
-    contentType === 'image'
-      ? catalog.generation_options.imageAspectRatios
-      : catalog.generation_options.videoAspectRatios
+  const selectedLanguageOption = catalog.generation_options.languages.find(
+    (language) => language.id === selectedLanguage,
+  )
+  const selectedVideoOrientation = catalog.generation_options.videoOrientations.find(
+    (orientation) => orientation.id === videoOrientation,
+  )
+  const imageAspectRatios = catalog.generation_options.imageAspectRatios
   const videoStyles = catalog.generation_options.videoStyles
+  const languageOptions = catalog.generation_options.languages
+  const videoOrientations = catalog.generation_options.videoOrientations
 
   const resetGenerationState = () => {
     setPhase('idle')
@@ -143,10 +175,7 @@ function App() {
       setCatalogError('')
 
       try {
-        const [user, data] = await Promise.all([
-          fetchMe(authToken),
-          fetchCatalog(authToken),
-        ])
+        const [user, data] = await Promise.all([fetchMe(authToken), fetchCatalog(authToken)])
         if (cancelled) {
           return
         }
@@ -157,6 +186,13 @@ function App() {
           setSelectedProductId((current) => current || data.products[0]?.id || '')
           setSelectedUgcCreatorId(
             (current) => current || data.generation_options.ugcCreators[0]?.id || '',
+          )
+          setSelectedLanguage(
+            (current) => current || data.generation_options.languages[0]?.id || 'en',
+          )
+          setVideoOrientation(
+            (current) =>
+              current || data.generation_options.videoOrientations[0]?.id || 'portrait',
           )
           setAuthPhase('ready')
         })
@@ -199,11 +235,22 @@ function App() {
   }, [catalog.generation_options.ugcCreators, selectedUgcCreatorId])
 
   useEffect(() => {
-    const fallbackAspectRatio = contentType === 'image' ? '1:1' : '9:16'
-    if (!availableAspectRatios.includes(aspectRatio)) {
-      setAspectRatio(fallbackAspectRatio)
+    if (!selectedLanguage && catalog.generation_options.languages[0]) {
+      setSelectedLanguage(catalog.generation_options.languages[0].id)
     }
-  }, [aspectRatio, availableAspectRatios, contentType])
+  }, [catalog.generation_options.languages, selectedLanguage])
+
+  useEffect(() => {
+    if (!videoOrientation && catalog.generation_options.videoOrientations[0]) {
+      setVideoOrientation(catalog.generation_options.videoOrientations[0].id)
+    }
+  }, [catalog.generation_options.videoOrientations, videoOrientation])
+
+  useEffect(() => {
+    if (!imageAspectRatios.includes(imageAspectRatio)) {
+      setImageAspectRatio(imageAspectRatios[0] || '1:1')
+    }
+  }, [imageAspectRatio, imageAspectRatios])
 
   const pollJob = useEffectEvent(async () => {
     if (!activeJob || !authToken) {
@@ -291,10 +338,6 @@ function App() {
     }
   }
 
-  const handleLogout = () => {
-    clearSession()
-  }
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
@@ -313,11 +356,16 @@ function App() {
         token: authToken,
         productId: selectedProductId,
         contentType,
+        language: selectedLanguage,
         videoStyle: contentType === 'video' ? videoStyle : '',
+        videoOrientation: contentType === 'video' ? videoOrientation : '',
         ugcCreatorId:
           contentType === 'video' && videoStyle === 'ugc' ? selectedUgcCreatorId : '',
         prompt,
-        aspectRatio,
+        aspectRatio:
+          contentType === 'video'
+            ? selectedVideoOrientation?.aspect_ratio || '9:16'
+            : imageAspectRatio,
         includeAudio,
         referenceImages,
       })
@@ -349,6 +397,10 @@ function App() {
     setReferenceImages(files)
   }
 
+  const handleLogout = () => {
+    clearSession()
+  }
+
   const promptSummary = deferredPrompt.trim()
     ? deferredPrompt.trim()
     : 'Your creative brief will appear here once you start typing.'
@@ -356,7 +408,8 @@ function App() {
   const isWorking = phase === 'submitting' || phase === 'queued' || phase === 'processing'
   const needsUgcCreator = contentType === 'video' && videoStyle === 'ugc'
   const canSubmit =
-    Boolean(selectedProductId && prompt.trim()) &&
+    Boolean(selectedProductId && prompt.trim() && selectedLanguage) &&
+    (contentType === 'image' || Boolean(videoOrientation)) &&
     (!needsUgcCreator || Boolean(selectedUgcCreatorId)) &&
     !isWorking
   const primaryAsset = generatedAssets[0]
@@ -367,7 +420,7 @@ function App() {
       <div className="auth-shell">
         <div className="auth-card">
           <p className="eyebrow">Coffee 2.0 Content Studio</p>
-          <h1>Checking your session…</h1>
+          <h1>Checking your session...</h1>
         </div>
       </div>
     )
@@ -380,7 +433,7 @@ function App() {
           <p className="eyebrow">Coffee 2.0 Content Studio</p>
           <h1>Sign in before generating.</h1>
           <p className="hero-description">
-            The app is now protected behind a login so only approved users can access
+            The app is protected behind a login so only approved users can access
             generation.
           </p>
 
@@ -430,11 +483,10 @@ function App() {
       <header className="hero-banner">
         <div className="hero-copy">
           <p className="eyebrow">Coffee 2.0 Content Studio</p>
-          <h1>Create image ads, UGC, and product videos from one workflow.</h1>
+          <h1>Create image ads, UGC, and premium product videos from one workflow.</h1>
           <p className="hero-description">
-            Pick a Coffee 2.0 product, choose image or video, add your prompt,
-            use the built-in safe UGC creator presets if needed, and generate
-            branded content through a simple MVP flow.
+            Pick a Coffee 2.0 product, choose the ad language, switch between image and
+            video, and generate polished creative with product references already wired in.
           </p>
         </div>
         <div className="hero-orbit" aria-hidden="true">
@@ -503,10 +555,27 @@ function App() {
         <section className="panel studio-panel">
           <div className="section-heading">
             <p className="section-kicker">2. Build the creative brief</p>
-            <h2>Choose the output, prompt it, and launch the generation.</h2>
+            <h2>Choose the language, format, and custom direction.</h2>
           </div>
 
           <form className="studio-form" onSubmit={handleSubmit}>
+            <div className="field-block">
+              <label className="field-label">Ad language</label>
+              <div className="choice-grid compact-grid">
+                {languageOptions.map((language: LanguageOption) => (
+                  <button
+                    key={language.id}
+                    type="button"
+                    className={`choice-card ${selectedLanguage === language.id ? 'active' : ''}`}
+                    onClick={() => setSelectedLanguage(language.id)}
+                  >
+                    <span>{language.label}</span>
+                    <small>{language.native_label}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="field-block">
               <label className="field-label">Output type</label>
               <div className="segmented-control">
@@ -524,22 +593,41 @@ function App() {
             </div>
 
             {contentType === 'video' ? (
-              <div className="field-block">
-                <label className="field-label">Video style</label>
-                <div className="choice-grid">
-                  {videoStyles.map((style: VideoStyle) => (
-                    <button
-                      key={style.id}
-                      type="button"
-                      className={`choice-card ${videoStyle === style.id ? 'active' : ''}`}
-                      onClick={() => setVideoStyle(style.id)}
-                    >
-                      <span>{style.label}</span>
-                      <small>{style.description}</small>
-                    </button>
-                  ))}
+              <>
+                <div className="field-block">
+                  <label className="field-label">Video style</label>
+                  <div className="choice-grid">
+                    {videoStyles.map((style: VideoStyle) => (
+                      <button
+                        key={style.id}
+                        type="button"
+                        className={`choice-card ${videoStyle === style.id ? 'active' : ''}`}
+                        onClick={() => setVideoStyle(style.id)}
+                      >
+                        <span>{style.label}</span>
+                        <small>{style.description}</small>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+
+                <div className="field-block">
+                  <label className="field-label">Video orientation</label>
+                  <div className="choice-grid">
+                    {videoOrientations.map((orientation: VideoOrientation) => (
+                      <button
+                        key={orientation.id}
+                        type="button"
+                        className={`choice-card ${videoOrientation === orientation.id ? 'active' : ''}`}
+                        onClick={() => setVideoOrientation(orientation.id)}
+                      >
+                        <span>{orientation.label}</span>
+                        <small>{orientation.description}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
             ) : null}
 
             {needsUgcCreator ? (
@@ -567,51 +655,55 @@ function App() {
               </div>
             ) : null}
 
-            <div className="field-row">
+            {contentType === 'image' ? (
               <div className="field-block">
-                <label className="field-label">Aspect ratio</label>
+                <label className="field-label">Image aspect ratio</label>
                 <div className="pill-row">
-                  {availableAspectRatios.map((ratio) => (
+                  {imageAspectRatios.map((ratio) => (
                     <button
                       key={ratio}
                       type="button"
-                      className={`pill ${aspectRatio === ratio ? 'active' : ''}`}
-                      onClick={() => setAspectRatio(ratio)}
+                      className={`pill ${imageAspectRatio === ratio ? 'active' : ''}`}
+                      onClick={() => setImageAspectRatio(ratio)}
                     >
                       {ratio}
                     </button>
                   ))}
                 </div>
               </div>
+            ) : null}
 
-              {contentType === 'video' ? (
-                <label className="toggle-card">
-                  <input
-                    type="checkbox"
-                    checked={includeAudio}
-                    onChange={(event) => setIncludeAudio(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Generate AI audio</strong>
-                    <small>
-                      Useful for experimental UGC runs, but slower and less predictable.
-                    </small>
-                  </span>
-                </label>
-              ) : null}
-            </div>
+            {contentType === 'video' ? (
+              <label className="toggle-card">
+                <input
+                  type="checkbox"
+                  checked={includeAudio}
+                  onChange={(event) => setIncludeAudio(event.target.checked)}
+                />
+                <span>
+                  <strong>Generate AI audio</strong>
+                  <small>
+                    Useful for experimental UGC runs, but slower and less predictable.
+                  </small>
+                </span>
+              </label>
+            ) : null}
 
             <div className="field-block">
               <label className="field-label" htmlFor="prompt">
-                Prompt
+                Custom prompt
               </label>
               <textarea
                 id="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 rows={7}
-                placeholder="Describe the ad concept, setting, style, camera feel, and the specific product benefits you want highlighted."
+                placeholder="Describe the exact concept you want. Mention scene, tone, hook, camera feel, claims to highlight, CTA style, and any non-negotiables."
               />
+              <p className="helper-text">
+                Your custom prompt is treated as a top-priority instruction in the final
+                generation prompt.
+              </p>
             </div>
 
             <div className="field-block">
@@ -665,6 +757,11 @@ function App() {
           <div className="brief-card">
             <span className="mini-label">Prompt preview</span>
             <p>{promptSummary}</p>
+            <div className="brief-meta">
+              <span>{selectedLanguageOption?.label || 'English'}</span>
+              <span>{contentType === 'video' ? selectedVideoOrientation?.label || 'Portrait' : imageAspectRatio}</span>
+              <span>{contentType === 'video' ? videoStyle.toUpperCase() : 'IMAGE'}</span>
+            </div>
           </div>
 
           <div className="status-card">
@@ -714,8 +811,8 @@ function App() {
                 <div>
                   <span>Generated content will appear here</span>
                   <small>
-                    Add real product photos and rights-cleared creator photos for the best
-                    brand fidelity.
+                    The prompt now enforces language, premium pacing, and a stronger ad
+                    structure for nicer image and video outputs.
                   </small>
                 </div>
               </div>

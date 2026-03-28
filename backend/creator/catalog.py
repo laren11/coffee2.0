@@ -150,6 +150,29 @@ UGC_CREATORS = [
     },
 ]
 
+LANGUAGES = [
+    {"id": "en", "label": "English", "native_label": "English"},
+    {"id": "sl", "label": "Slovenian", "native_label": "Slovenscina"},
+    {"id": "hr", "label": "Croatian", "native_label": "Hrvatski"},
+    {"id": "de", "label": "German", "native_label": "Deutsch"},
+    {"id": "it", "label": "Italian", "native_label": "Italiano"},
+]
+
+VIDEO_ORIENTATIONS = [
+    {
+        "id": "portrait",
+        "label": "Portrait",
+        "aspect_ratio": "9:16",
+        "description": "Best for Reels, TikTok, Stories, and paid social.",
+    },
+    {
+        "id": "landscape",
+        "label": "Landscape",
+        "aspect_ratio": "16:9",
+        "description": "Best for widescreen ads, YouTube, and landing pages.",
+    },
+]
+
 PRODUCTS_BY_ID = {product["id"]: product for product in PRODUCTS}
 UGC_CREATORS_BY_ID = {creator["id"]: creator for creator in UGC_CREATORS}
 
@@ -188,6 +211,8 @@ def get_catalog_payload() -> dict:
                     "description": "Polished, commercial-style branded content.",
                 },
             ],
+            "languages": LANGUAGES,
+            "videoOrientations": VIDEO_ORIENTATIONS,
             "ugcCreators": [_serialize_ugc_creator(creator) for creator in UGC_CREATORS],
         },
     }
