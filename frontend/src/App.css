@@ -567,6 +567,16 @@ textarea:focus,
   gap: 10px;
 }
 
+.status-hint {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.status-hint.warning {
+  color: #8e6244;
+}
+
 .log-list p {
   margin: 0;
   padding: 10px 12px;

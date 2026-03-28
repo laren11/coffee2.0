@@ -137,6 +137,7 @@ class FalServiceTests(SimpleTestCase):
 
         self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
         self.assertEqual(arguments["image_url"], starter_frame_mock.return_value)
+        self.assertEqual(arguments["duration"], "6s")
         self.assertIsInstance(has_reference_images, bool)
         self.assertTrue(used_generated_starter_frame)
         starter_frame_mock.assert_called_once()
@@ -164,6 +165,30 @@ class FalServiceTests(SimpleTestCase):
         self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
         self.assertFalse(used_generated_starter_frame)
         self.assertIn("image_url", arguments)
+        self.assertEqual(arguments["duration"], "6s")
+        self.assertIsInstance(has_reference_images, bool)
+        sync_starter_frame_mock.assert_called_once()
+
+    @patch("creator.services.fal_service._sync_video_starter_frames_enabled", return_value=False)
+    def test_ugc_video_defaults_to_shorter_duration(self, sync_starter_frame_mock):
+        model_id, arguments, has_reference_images, used_generated_starter_frame = (
+            _build_arguments(
+                product_ids=["coffee-2-0"],
+                content_type="video",
+                prompt="Create a founder testimonial.",
+                language="en",
+                aspect_ratio="9:16",
+                video_style="ugc",
+                video_orientation="portrait",
+                ugc_creator_id="founder",
+                include_audio=True,
+                reference_images=[],
+            )
+        )
+
+        self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
+        self.assertEqual(arguments["duration"], "4s")
+        self.assertFalse(used_generated_starter_frame)
         self.assertIsInstance(has_reference_images, bool)
         sync_starter_frame_mock.assert_called_once()
 

@@ -71,6 +71,14 @@ def _ensure_fal_key() -> None:
         )
 
 
+def _video_duration(*, video_style: str, include_audio: bool) -> str:
+    if video_style == "ugc":
+        return "4s"
+    if include_audio:
+        return "4s"
+    return "6s"
+
+
 def _file_to_data_uri(upload) -> str:
     if upload.size > MAX_REFERENCE_IMAGE_SIZE_BYTES:
         raise FalSubmissionError(
@@ -374,7 +382,10 @@ def _build_arguments(
     arguments = {
         "prompt": full_prompt,
         "aspect_ratio": aspect_ratio,
-        "duration": "8s",
+        "duration": _video_duration(
+            video_style=video_style or "ad",
+            include_audio=include_audio,
+        ),
         "resolution": "720p",
         "generate_audio": include_audio,
         "negative_prompt": build_negative_prompt(video_style),
@@ -420,6 +431,10 @@ def submit_generation(
     reference_images: list,
 ) -> SubmissionResult:
     _ensure_fal_key()
+    video_duration = _video_duration(
+        video_style=video_style or "ad",
+        include_audio=include_audio,
+    )
     try:
         model_id, arguments, used_reference_images, used_generated_starter_frame = (
             _build_arguments(
@@ -452,11 +467,11 @@ def submit_generation(
     if content_type == "video":
         if used_generated_starter_frame:
             guidance_chunks.append(
-                "Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot."
+                f"Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot. Clip length is set to {video_duration} for faster turnaround."
             )
         else:
             guidance_chunks.append(
-                "Video generation uses the faster direct Veo 3.1 Fast submission flow so the hosted app can return a job immediately and avoid request timeouts."
+                f"Video generation uses the faster direct Veo 3.1 Fast submission flow so the hosted app can return a job immediately and avoid request timeouts. Clip length is set to {video_duration} for faster turnaround."
             )
     if len(product_ids) > 1:
         guidance_chunks.append(

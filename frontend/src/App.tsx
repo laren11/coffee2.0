@@ -49,6 +49,7 @@ type ActiveJob = {
   contentType: ContentType
   guidanceNote: string
   usedReferenceImages: boolean
+  submittedAt: number
 }
 
 type PromptRecipe = {
@@ -217,7 +218,7 @@ function App() {
   )
   const [selectedUgcCreatorId, setSelectedUgcCreatorId] = useState('')
   const [imageAspectRatio, setImageAspectRatio] = useState('1:1')
-  const [includeAudio, setIncludeAudio] = useState(true)
+  const [includeAudio, setIncludeAudio] = useState(false)
   const [prompt, setPrompt] = useState(
     'Create a premium high-converting ad with a strong opening hook, realistic product interaction, persuasive benefit moments, and a clean final CTA-ready ending.',
   )
@@ -232,6 +233,8 @@ function App() {
   const [brewModeEnabled, setBrewModeEnabled] = useState(false)
   const [brewToastVisible, setBrewToastVisible] = useState(false)
   const [showCompletionBurst, setShowCompletionBurst] = useState(false)
+  const [jobHeartbeat, setJobHeartbeat] = useState(() => Date.now())
+  const [queuePosition, setQueuePosition] = useState<number | null>(null)
 
   const deferredPrompt = useDeferredValue(prompt)
   const selectedProducts = catalog.products.filter((product) =>
@@ -311,6 +314,7 @@ function App() {
     setSubmissionError('')
     setActiveJob(null)
     setStatusLogs([])
+    setQueuePosition(null)
     setResultDescription('')
     setGeneratedAssets([])
   }
@@ -487,6 +491,20 @@ function App() {
   }, [contentType, includeAudio, videoStyle])
 
   useEffect(() => {
+    if (!activeJob || phase === 'completed' || phase === 'failed' || phase === 'idle') {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setJobHeartbeat(Date.now())
+    }, 1000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [activeJob, phase])
+
+  useEffect(() => {
     let sequence = ''
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -554,13 +572,14 @@ function App() {
         status.logs
           ?.map((log) => log.message)
           .filter((message): message is string => Boolean(message))
-          .slice(-4) || []
+          .slice(-8) || []
       const shouldRefreshHistory =
         status.state === 'completed' || status.state === 'failed'
 
       startTransition(() => {
         setStatusLogs(nextLogs)
         setSubmissionError(status.error || '')
+        setQueuePosition(status.queue_position ?? null)
 
         if (status.state === 'queued') {
           setPhase('queued')
@@ -593,6 +612,7 @@ function App() {
         return
       }
       setPhase('failed')
+      setQueuePosition(null)
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to fetch generation status.',
       )
@@ -673,7 +693,9 @@ function App() {
           contentType: response.content_type,
           guidanceNote: response.guidance_note,
           usedReferenceImages: response.used_reference_images,
+          submittedAt: Date.now(),
         })
+        setQueuePosition(null)
         setPhase('queued')
       })
       void refreshHistory()
@@ -715,6 +737,11 @@ function App() {
     clearSession()
   }
 
+  const handleVideoStyleChange = (styleId: VideoStyle['id']) => {
+    setVideoStyle(styleId)
+    setIncludeAudio(styleId === 'ugc')
+  }
+
   const handleSurprisePrompt = () => {
     const recipe = promptRecipes[Math.floor(Math.random() * promptRecipes.length)]
     setPrompt(recipe.text)
@@ -734,6 +761,10 @@ function App() {
   const isWorking = phase === 'submitting' || phase === 'queued' || phase === 'processing'
   const needsUgcCreator = contentType === 'video' && videoStyle === 'ugc'
   const isUgcAudioLocked = contentType === 'video' && videoStyle === 'ugc'
+  const activeJobElapsedSeconds = activeJob
+    ? Math.max(0, Math.floor((jobHeartbeat - activeJob.submittedAt) / 1000))
+    : 0
+  const delayedProviderJob = phase === 'processing' && activeJobElapsedSeconds >= 240
   const canSubmit =
     Boolean(selectedProductIds.length && prompt.trim() && selectedLanguage) &&
     (contentType === 'image' || Boolean(videoOrientation)) &&
@@ -748,6 +779,11 @@ function App() {
     contentType === 'video'
       ? selectedVideoOrientation?.aspect_ratio || '9:16'
       : imageAspectRatio
+  const formatElapsedTime = (totalSeconds: number) => {
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    return `${minutes}:${String(seconds).padStart(2, '0')}`
+  }
 
   if (authPhase === 'checking') {
     return (
@@ -1003,7 +1039,7 @@ function App() {
                         key={style.id}
                         type="button"
                         className={`choice-card ${videoStyle === style.id ? 'active' : ''}`}
-                        onClick={() => setVideoStyle(style.id)}
+                        onClick={() => handleVideoStyleChange(style.id)}
                       >
                         <span>{style.label}</span>
                         <small>{style.description}</small>
@@ -1095,8 +1131,8 @@ function App() {
                   </strong>
                   <small>
                     {isUgcAudioLocked
-                      ? 'UGC videos always render with speech enabled in the selected language, and the pipeline now creates a realistic starter frame before animating it.'
-                      : 'Optional for cinematic ads. Turn it on when you want native dialogue or voiceover, but final premium voiceovers may still be cleaner from a dedicated voice tool.'}
+                      ? 'UGC videos always render with speech enabled in the selected language. To keep render times down, the hosted flow now favors shorter clips and direct provider submission.'
+                      : 'Optional for cinematic ads. Leaving this off is faster. Turn it on only when you really want native dialogue or voiceover.'}
                   </small>
                 </span>
               </label>
@@ -1125,8 +1161,9 @@ function App() {
               <p className="helper-text">
                 Your custom prompt is treated as a top-priority instruction in the final
                 generation prompt. Mention hook, setting, camera feel, spoken line, CTA,
-                and any shots you want to avoid. Video runs now generate a tailored starter
-                frame first, then animate it for a stronger opening shot.
+                and any shots you want to avoid. Hosted video runs now use a quicker direct
+                flow so the job gets submitted faster and is less likely to stall at request
+                time.
               </p>
               {surpriseHint ? <p className="surprise-hint">{surpriseHint}</p> : null}
             </div>
@@ -1215,6 +1252,22 @@ function App() {
             </div>
 
             {activeJob ? <p className="muted">{activeJob.guidanceNote}</p> : null}
+            {activeJob && isWorking ? (
+              <p className="status-hint">
+                Elapsed: {formatElapsedTime(activeJobElapsedSeconds)}
+                {phase === 'queued' && queuePosition !== null
+                  ? ` • Queue position ${queuePosition}`
+                  : ''}
+              </p>
+            ) : null}
+            {delayedProviderJob ? (
+              <p className="status-hint warning">
+                The app is still polling correctly, but fal.ai is taking longer than usual
+                to finish this video. This usually means upstream queue or render latency,
+                not a broken browser session. Shorter clips and no ad audio are the fastest
+                path.
+              </p>
+            ) : null}
 
             {statusLogs.length ? (
               <div className="log-list">
