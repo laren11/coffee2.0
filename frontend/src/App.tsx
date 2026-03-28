@@ -99,13 +99,17 @@ const FALLBACK_CATALOG: CatalogResponse = {
 }
 
 function buildPromptRecipes(
-  product: Product | undefined,
+  products: Product[],
   contentType: ContentType,
   videoStyle: '' | 'ugc' | 'ad',
   languageLabel: string,
 ): PromptRecipe[] {
-  const productName = product?.name || 'Coffee 2.0'
-  const firstBenefit = product?.benefits[0] || 'clear premium product benefits'
+  const productName =
+    products.length > 0
+      ? products.map((product) => product.name).join(' + ')
+      : 'Coffee 2.0'
+  const firstBenefit =
+    products.flatMap((product) => product.benefits)[0] || 'clear premium product benefits'
 
   if (contentType === 'image') {
     return [
@@ -204,7 +208,7 @@ function App() {
   const [catalogError, setCatalogError] = useState('')
   const [historyItems, setHistoryItems] = useState<GenerationHistoryItem[]>([])
   const [historyError, setHistoryError] = useState('')
-  const [selectedProductId, setSelectedProductId] = useState('')
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
   const [contentType, setContentType] = useState<ContentType>('image')
   const [selectedLanguage, setSelectedLanguage] = useState<LanguageOption['id']>('en')
   const [videoStyle, setVideoStyle] = useState<'' | 'ugc' | 'ad'>('ugc')
@@ -230,8 +234,18 @@ function App() {
   const [showCompletionBurst, setShowCompletionBurst] = useState(false)
 
   const deferredPrompt = useDeferredValue(prompt)
-  const selectedProduct = catalog.products.find(
-    (product) => product.id === selectedProductId,
+  const selectedProducts = catalog.products.filter((product) =>
+    selectedProductIds.includes(product.id),
+  )
+  const primarySelectedProduct = selectedProducts[0]
+  const selectedProductNames = selectedProducts.map((product) => product.name)
+  const selectedProductFolders = selectedProducts.map((product) => product.asset_folder)
+  const selectedProductBenefits = Array.from(
+    new Set(selectedProducts.flatMap((product) => product.benefits)),
+  )
+  const totalSelectedProductRefs = selectedProducts.reduce(
+    (sum, product) => sum + product.local_reference_count,
+    0,
   )
   const selectedUgcCreator = catalog.generation_options.ugcCreators.find(
     (creator) => creator.id === selectedUgcCreatorId,
@@ -247,7 +261,7 @@ function App() {
   const languageOptions = catalog.generation_options.languages
   const videoOrientations = catalog.generation_options.videoOrientations
   const promptRecipes = buildPromptRecipes(
-    selectedProduct,
+    selectedProducts,
     contentType,
     videoStyle,
     selectedLanguageOption?.label || 'English',
@@ -368,7 +382,15 @@ function App() {
         startTransition(() => {
           setCurrentUsername(user.username)
           setCatalog(data)
-          setSelectedProductId((current) => current || data.products[0]?.id || '')
+          setSelectedProductIds((current) => {
+            const validCurrent = current.filter((productId) =>
+              data.products.some((product) => product.id === productId),
+            )
+            if (validCurrent.length) {
+              return validCurrent
+            }
+            return data.products[0] ? [data.products[0].id] : []
+          })
           setSelectedUgcCreatorId(
             (current) => current || data.generation_options.ugcCreators[0]?.id || '',
           )
@@ -418,10 +440,17 @@ function App() {
   }, [authToken])
 
   useEffect(() => {
-    if (!selectedProductId && catalog.products[0]) {
-      setSelectedProductId(catalog.products[0].id)
+    const validSelectedIds = selectedProductIds.filter((productId) =>
+      catalog.products.some((product) => product.id === productId),
+    )
+    if (validSelectedIds.length !== selectedProductIds.length) {
+      setSelectedProductIds(validSelectedIds)
+      return
     }
-  }, [catalog.products, selectedProductId])
+    if (!validSelectedIds.length && catalog.products[0]) {
+      setSelectedProductIds([catalog.products[0].id])
+    }
+  }, [catalog.products, selectedProductIds])
 
   useEffect(() => {
     const creatorIds = catalog.generation_options.ugcCreators.map((creator) => creator.id)
@@ -607,7 +636,7 @@ function App() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (!selectedProductId || !authToken) {
+    if (!selectedProductIds.length || !authToken) {
       return
     }
 
@@ -620,7 +649,7 @@ function App() {
     try {
       const response = await submitGeneration({
         token: authToken,
-        productId: selectedProductId,
+        productIds: selectedProductIds,
         contentType,
         language: selectedLanguage,
         videoStyle: contentType === 'video' ? videoStyle : '',
@@ -659,6 +688,22 @@ function App() {
     }
   }
 
+  const toggleProductSelection = (productId: string) => {
+    setSelectedProductIds((current) =>
+      current.includes(productId)
+        ? current.filter((id) => id !== productId)
+        : [...current, productId],
+    )
+  }
+
+  const selectAllProducts = () => {
+    setSelectedProductIds(catalog.products.map((product) => product.id))
+  }
+
+  const clearProductSelection = () => {
+    setSelectedProductIds([])
+  }
+
   const handleReferenceImagesChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []).slice(0, 6)
     setReferenceImages(files)
@@ -688,12 +733,15 @@ function App() {
   const needsUgcCreator = contentType === 'video' && videoStyle === 'ugc'
   const isUgcAudioLocked = contentType === 'video' && videoStyle === 'ugc'
   const canSubmit =
-    Boolean(selectedProductId && prompt.trim() && selectedLanguage) &&
+    Boolean(selectedProductIds.length && prompt.trim() && selectedLanguage) &&
     (contentType === 'image' || Boolean(videoOrientation)) &&
     (!needsUgcCreator || Boolean(selectedUgcCreatorId)) &&
     !isWorking
   const primaryAsset = generatedAssets[0]
-  const productPalette = selectedProduct?.palette || ['#B97A5B', '#F5E6D6', '#6D4A38']
+  const productPalette =
+    Array.from(new Set(selectedProducts.flatMap((product) => product.palette))).slice(0, 3)
+      .concat(['#B97A5B', '#F5E6D6', '#6D4A38'])
+      .slice(0, 3)
   const previewAspectRatio =
     contentType === 'video'
       ? selectedVideoOrientation?.aspect_ratio || '9:16'
@@ -774,8 +822,9 @@ function App() {
           <p className="eyebrow">Coffee 2.0 Content Studio</p>
           <h1>Create image ads, UGC, and premium product videos from one workflow.</h1>
           <p className="hero-description">
-            Pick a Coffee 2.0 product, choose the ad language, switch between image and
-            video, and generate polished creative with product references already wired in.
+            Pick one Coffee 2.0 product or build a product lineup, choose the ad language,
+            switch between image and video, and generate polished creative with product
+            references already wired in.
           </p>
         </div>
         <div className="hero-orbit" aria-hidden="true">
@@ -824,21 +873,38 @@ function App() {
       <main className="workspace">
         <section className="panel catalog-panel">
           <div className="section-heading">
-            <p className="section-kicker">1. Choose product</p>
-            <h2>Start from the product you want to promote.</h2>
+            <p className="section-kicker">1. Choose products</p>
+            <h2>Pick one product or combine multiple products in the same ad.</h2>
           </div>
 
           {loadingCatalog ? <p className="muted">Loading Coffee 2.0 products...</p> : null}
           {catalogError ? <p className="error-banner">{catalogError}</p> : null}
 
+          <div className="product-toolbar">
+            <span className="muted">
+              {selectedProductIds.length
+                ? `${selectedProductIds.length} product${selectedProductIds.length === 1 ? '' : 's'} selected`
+                : 'No products selected yet'}
+            </span>
+            <div className="asset-strip">
+              <button type="button" className="ghost-button" onClick={selectAllProducts}>
+                Select all 4
+              </button>
+              <button type="button" className="ghost-button" onClick={clearProductSelection}>
+                Clear
+              </button>
+            </div>
+          </div>
+
           <div className="product-grid">
             {catalog.products.map((product: Product) => {
-              const isSelected = product.id === selectedProductId
+              const isSelected = selectedProductIds.includes(product.id)
               return (
                 <button
                   key={product.id}
                   type="button"
                   className={`product-card ${isSelected ? 'selected' : ''}`}
+                  aria-pressed={isSelected}
                   style={
                     {
                       '--card-start': product.palette[0],
@@ -846,32 +912,40 @@ function App() {
                       '--card-end': product.palette[2],
                     } as CSSProperties
                   }
-                  onClick={() => setSelectedProductId(product.id)}
+                  onClick={() => toggleProductSelection(product.id)}
                 >
                   <span className="product-name">{product.name}</span>
                   <span className="product-tagline">{product.tagline}</span>
                   <small className="card-meta">
                     {product.local_reference_count} local refs ready
                   </small>
+                  <small className="card-meta">
+                    {isSelected ? 'Included in this concept' : 'Tap to add to the lineup'}
+                  </small>
                 </button>
               )
             })}
           </div>
 
-          {selectedProduct ? (
+          {selectedProducts.length ? (
             <div className="product-details">
-              <p className="product-description">{selectedProduct.description}</p>
+              <p className="product-description">
+                {selectedProducts.length === 1
+                  ? primarySelectedProduct?.description
+                  : `Selected lineup: ${selectedProductNames.join(', ')}. The backend will combine the selected product positioning, benefits, and reference images into one campaign prompt.`}
+              </p>
               <ul className="benefit-list">
-                {selectedProduct.benefits.map((benefit) => (
+                {selectedProductBenefits.slice(0, 6).map((benefit) => (
                   <li key={benefit}>{benefit}</li>
                 ))}
               </ul>
               <p className="asset-note">
-                Product photo folder: <code>{selectedProduct.asset_folder}</code>
+                Product folders loaded: <code>{selectedProductFolders.join(', ')}</code>
               </p>
               <p className="asset-note">
-                Best results usually come from 3 to 6 product photos: front packshot, 45
-                degree angle, close label detail, in-hand shot, and one lifestyle scene.
+                Total local refs available: {totalSelectedProductRefs}. Best results usually
+                come from 3 to 6 product photos per product: front packshot, 45 degree angle,
+                close label detail, in-hand shot, and one lifestyle scene.
               </p>
             </div>
           ) : null}
@@ -1107,6 +1181,11 @@ function App() {
             <span className="mini-label">Prompt preview</span>
             <p>{promptSummary}</p>
             <div className="brief-meta">
+              <span>
+                {selectedProductNames.length
+                  ? selectedProductNames.join(' + ')
+                  : 'No products selected'}
+              </span>
               <span>{selectedLanguageOption?.label || 'English'}</span>
               <span>{contentType === 'video' ? selectedVideoOrientation?.label || 'Portrait' : imageAspectRatio}</span>
               <span>{contentType === 'video' ? videoStyle.toUpperCase() : 'IMAGE'}</span>
@@ -1128,7 +1207,7 @@ function App() {
                 <small>
                   {activeJob
                     ? `${activeJob.modelLabel} - ${activeJob.usedReferenceImages ? 'with refs' : 'no refs'}`
-                    : 'Choose a product and submit your first prompt.'}
+                    : 'Choose one or more products and submit your first prompt.'}
                 </small>
               </div>
             </div>
@@ -1226,7 +1305,11 @@ function App() {
               return (
                 <article key={item.id} className="history-card">
                   <div className="history-meta">
-                    <strong>{item.product_name}</strong>
+                    <strong>
+                      {item.product_names?.length
+                        ? item.product_names.join(' + ')
+                        : item.product_name}
+                    </strong>
                     <small>{formatHistoryTimestamp(item.created_at)}</small>
                   </div>
                   <div className="brief-meta">

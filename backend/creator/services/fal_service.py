@@ -105,16 +105,25 @@ def _serialize_logs(logs: list[Any]) -> list[dict[str, Any]]:
 
 def _collect_reference_assets(
     *,
-    product_id: str,
+    product_ids: list[str],
     ugc_creator_id: str,
     reference_images: list,
 ) -> ReferenceAssets:
     uploaded_reference_uris = [
         _file_to_data_uri(upload) for upload in reference_images[:MAX_REFERENCE_IMAGES]
     ]
-    local_product_reference_uris = [
-        _path_to_data_uri(path) for path in list_product_reference_files(product_id)
-    ]
+    product_reference_groups = [list_product_reference_files(product_id) for product_id in product_ids]
+    local_product_reference_uris: list[str] = []
+    while (
+        len(local_product_reference_uris) < MAX_REFERENCE_IMAGES
+        and any(product_reference_groups)
+    ):
+        for group in product_reference_groups:
+            if not group:
+                continue
+            local_product_reference_uris.append(_path_to_data_uri(group.pop(0)))
+            if len(local_product_reference_uris) >= MAX_REFERENCE_IMAGES:
+                break
     local_creator_reference_uris = (
         [_path_to_data_uri(path) for path in list_ugc_creator_reference_files(ugc_creator_id)]
         if ugc_creator_id
@@ -227,7 +236,7 @@ def _request_video_starter_frame(
 
 def _generate_video_starter_frame_url(
     *,
-    product_id: str,
+    product_ids: list[str],
     prompt: str,
     language: str,
     video_style: str,
@@ -236,14 +245,14 @@ def _generate_video_starter_frame_url(
     include_audio: bool,
     reference_assets: ReferenceAssets,
 ) -> str:
-    product = PRODUCTS_BY_ID[product_id]
+    products = [PRODUCTS_BY_ID[product_id] for product_id in product_ids]
     ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
     primary_reference_uris = _starter_frame_reference_uris(
         video_style=video_style,
         reference_assets=reference_assets,
     )
     prompt_text = build_video_starter_frame_prompt(
-        product=product,
+        products=products,
         user_prompt=prompt,
         language=language,
         video_style=video_style,
@@ -280,7 +289,7 @@ def _generate_video_starter_frame_url(
 
 def _build_arguments(
     *,
-    product_id: str,
+    product_ids: list[str],
     content_type: str,
     prompt: str,
     language: str,
@@ -291,10 +300,10 @@ def _build_arguments(
     include_audio: bool,
     reference_images: list,
 ) -> tuple[str, dict[str, Any], bool, bool]:
-    product = PRODUCTS_BY_ID[product_id]
+    products = [PRODUCTS_BY_ID[product_id] for product_id in product_ids]
     ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
     reference_assets = _collect_reference_assets(
-        product_id=product_id,
+        product_ids=product_ids,
         ugc_creator_id=ugc_creator_id,
         reference_images=reference_images,
     )
@@ -308,7 +317,7 @@ def _build_arguments(
     used_generated_starter_frame = False
 
     full_prompt = build_generation_prompt(
-        product=product,
+        products=products,
         content_type=content_type,
         user_prompt=prompt,
         language=language,
@@ -343,7 +352,7 @@ def _build_arguments(
     }
 
     starter_frame_url = _generate_video_starter_frame_url(
-        product_id=product_id,
+        product_ids=product_ids,
         prompt=prompt,
         language=language,
         video_style=video_style or "ad",
@@ -359,7 +368,7 @@ def _build_arguments(
 
 def submit_generation(
     *,
-    product_id: str,
+    product_ids: list[str],
     content_type: str,
     prompt: str,
     language: str,
@@ -374,7 +383,7 @@ def submit_generation(
     try:
         model_id, arguments, used_reference_images, used_generated_starter_frame = (
             _build_arguments(
-                product_id=product_id,
+                product_ids=product_ids,
                 content_type=content_type,
                 prompt=prompt,
                 language=language,
@@ -403,6 +412,10 @@ def submit_generation(
     if content_type == "video":
         guidance_chunks.append(
             "Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot."
+        )
+    if len(product_ids) > 1:
+        guidance_chunks.append(
+            "Multiple selected products were blended into one combined campaign prompt and shared visual setup."
         )
     if used_reference_images:
         guidance_chunks.append(

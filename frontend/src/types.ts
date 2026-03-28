@@ -53,7 +53,7 @@ export type CatalogResponse = {
 
 export type SubmitGenerationPayload = {
   token: string
-  productId: string
+  productIds: string[]
   contentType: 'image' | 'video'
   language: LanguageOption['id']
   videoStyle: '' | 'ugc' | 'ad'
@@ -88,6 +88,8 @@ export type GenerationHistoryItem = {
   model_label: string
   product_id: string
   product_name: string
+  product_ids: string[]
+  product_names: string[]
   content_type: 'image' | 'video'
   language: LanguageOption['id']
   video_style: '' | 'ugc' | 'ad'

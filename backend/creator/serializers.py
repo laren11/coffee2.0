@@ -24,7 +24,10 @@ VIDEO_ASPECT_RATIOS = set(GENERATION_OPTIONS["videoAspectRatios"])
 
 
 class GenerationRequestSerializer(serializers.Serializer):
-    product_id = serializers.ChoiceField(choices=PRODUCT_IDS)
+    product_ids = serializers.ListField(
+        child=serializers.ChoiceField(choices=PRODUCT_IDS),
+        allow_empty=False,
+    )
     content_type = serializers.ChoiceField(choices=["image", "video"])
     prompt = serializers.CharField(max_length=1200, trim_whitespace=True)
     aspect_ratio = serializers.CharField(max_length=10, required=False, allow_blank=True)
@@ -47,6 +50,7 @@ class GenerationRequestSerializer(serializers.Serializer):
     include_audio = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
+        attrs["product_ids"] = list(dict.fromkeys(attrs["product_ids"]))
         content_type = attrs["content_type"]
         aspect_ratio = attrs.get("aspect_ratio") or ""
         language = attrs.get("language") or "en"

@@ -18,14 +18,16 @@ from creator.services.fal_service import (
 class PromptingTests(SimpleTestCase):
     def test_prompt_mentions_reference_fidelity_when_images_exist(self):
         prompt = build_generation_prompt(
-            product={
-                "name": "Coffee 2.0",
-                "tagline": "Focus and clean energy.",
-                "description": "Premium functional coffee.",
-                "benefits": ["adaptogens", "mushrooms"],
-                "creative_angles": ["desk focus"],
-                "base_prompt": "Make the product the hero.",
-            },
+            products=[
+                {
+                    "name": "Coffee 2.0",
+                    "tagline": "Focus and clean energy.",
+                    "description": "Premium functional coffee.",
+                    "benefits": ["adaptogens", "mushrooms"],
+                    "creative_angles": ["desk focus"],
+                    "base_prompt": "Make the product the hero.",
+                }
+            ],
             content_type="video",
             user_prompt="A quick creator testimonial in a bright kitchen.",
             language="sl",
@@ -48,14 +50,16 @@ class PromptingTests(SimpleTestCase):
 
     def test_starter_frame_prompt_matches_ugc_language_and_tone(self):
         prompt = build_video_starter_frame_prompt(
-            product={
-                "name": "Coffee 2.0",
-                "tagline": "Focus and clean energy.",
-                "description": "Premium functional coffee.",
-                "benefits": ["adaptogens", "mushrooms"],
-                "creative_angles": ["desk focus"],
-                "base_prompt": "Make the product the hero.",
-            },
+            products=[
+                {
+                    "name": "Coffee 2.0",
+                    "tagline": "Focus and clean energy.",
+                    "description": "Premium functional coffee.",
+                    "benefits": ["adaptogens", "mushrooms"],
+                    "creative_angles": ["desk focus"],
+                    "base_prompt": "Make the product the hero.",
+                }
+            ],
             user_prompt="Founder-style direct-to-camera hook in a modern office.",
             language="de",
             video_style="ugc",
@@ -74,6 +78,39 @@ class PromptingTests(SimpleTestCase):
         self.assertIn("German", prompt)
         self.assertIn("before the creator starts speaking", prompt)
 
+    def test_multi_product_prompt_mentions_lineup(self):
+        prompt = build_generation_prompt(
+            products=[
+                {
+                    "name": "Coffee 2.0",
+                    "tagline": "Focus and clean energy.",
+                    "description": "Premium functional coffee.",
+                    "benefits": ["adaptogens"],
+                    "creative_angles": ["desk focus"],
+                    "base_prompt": "Make the product the hero.",
+                },
+                {
+                    "name": "Matcha 2.0",
+                    "tagline": "Calm energy and clarity.",
+                    "description": "Premium functional matcha.",
+                    "benefits": ["calm energy"],
+                    "creative_angles": ["morning ritual"],
+                    "base_prompt": "Position it as a premium ritual drink.",
+                },
+            ],
+            content_type="image",
+            user_prompt="Show the products as a premium pair.",
+            language="en",
+            video_style="ad",
+            video_orientation="portrait",
+            ugc_creator=None,
+            has_reference_images=True,
+            include_audio=False,
+        )
+
+        self.assertIn("Products featured together: Coffee 2.0, Matcha 2.0.", prompt)
+        self.assertIn("bundle", prompt)
+
 
 class FalServiceTests(SimpleTestCase):
     @patch("creator.services.fal_service._generate_video_starter_frame_url")
@@ -82,7 +119,7 @@ class FalServiceTests(SimpleTestCase):
 
         model_id, arguments, has_reference_images, used_generated_starter_frame = (
             _build_arguments(
-                product_id="coffee-2-0",
+                product_ids=["coffee-2-0"],
                 content_type="video",
                 prompt="Create a cinematic performance ad.",
                 language="en",
@@ -111,7 +148,7 @@ class FalServiceTests(SimpleTestCase):
         ]
 
         starter_frame_url = _generate_video_starter_frame_url(
-            product_id="coffee-2-0",
+            product_ids=["coffee-2-0"],
             prompt="Confident founder testimonial in a premium office.",
             language="en",
             video_style="ugc",
@@ -183,6 +220,36 @@ class ApiTests(TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertIn("job_token", response.json())
+        self.assertEqual(
+            submit_generation_mock.call_args.kwargs["product_ids"], ["coffee-2-0"]
+        )
+
+    @patch("creator.views.submit_generation")
+    def test_generate_endpoint_accepts_multiple_products(self, submit_generation_mock):
+        submit_generation_mock.return_value.model_id = "fal-ai/nano-banana"
+        submit_generation_mock.return_value.model_label = "Nano Banana"
+        submit_generation_mock.return_value.request_id = "req-multi"
+        submit_generation_mock.return_value.content_type = "image"
+        submit_generation_mock.return_value.used_reference_images = True
+        submit_generation_mock.return_value.guidance_note = "Multi-product prompt."
+
+        response = self.client.post(
+            "/api/generate/",
+            {
+                "product_ids": ["coffee-2-0", "matcha-2-0"],
+                "content_type": "image",
+                "prompt": "Bundle ad.",
+                "language": "en",
+                "aspect_ratio": "1:1",
+            },
+            **self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            submit_generation_mock.call_args.kwargs["product_ids"],
+            ["coffee-2-0", "matcha-2-0"],
+        )
 
     @patch("creator.views.submit_generation")
     def test_generate_endpoint_accepts_legacy_founder_alias(self, submit_generation_mock):
@@ -212,6 +279,29 @@ class ApiTests(TestCase):
             submit_generation_mock.call_args.kwargs["ugc_creator_id"], "founder"
         )
         self.assertTrue(submit_generation_mock.call_args.kwargs["include_audio"])
+
+    @patch("creator.views.submit_generation")
+    def test_generate_endpoint_returns_debug_id_for_unexpected_errors(
+        self, submit_generation_mock
+    ):
+        submit_generation_mock.side_effect = ValueError("boom")
+
+        response = self.client.post(
+            "/api/generate/",
+            {
+                "product_id": "coffee-2-0",
+                "content_type": "video",
+                "prompt": "Founder testimonial.",
+                "language": "en",
+                "video_style": "ugc",
+                "video_orientation": "portrait",
+                "ugc_creator_id": "founder",
+            },
+            **self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("Debug ID:", response.json()["detail"])
 
     @patch("creator.views.fetch_generation_status")
     def test_status_endpoint_returns_completed_payload(self, status_mock):
@@ -245,8 +335,8 @@ class ApiTests(TestCase):
             job_token="job-123",
             model_id="fal-ai/nano-banana-pro",
             model_label="Nano Banana Pro",
-            product_id="coffee-2-0",
-            product_name="Coffee 2.0",
+            product_id="coffee-2-0,matcha-2-0",
+            product_name="Coffee 2.0, Matcha 2.0",
             content_type="image",
             language="en",
             prompt="A bright premium coffee ad.",
@@ -259,4 +349,7 @@ class ApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(len(payload["items"]), 1)
-        self.assertEqual(payload["items"][0]["product_name"], "Coffee 2.0")
+        self.assertEqual(payload["items"][0]["product_name"], "Coffee 2.0, Matcha 2.0")
+        self.assertEqual(
+            payload["items"][0]["product_ids"], ["coffee-2-0", "matcha-2-0"]
+        )

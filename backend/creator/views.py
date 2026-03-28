@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import logging
+from uuid import uuid4
 from typing import Any
 
 from django.contrib.auth import authenticate
@@ -21,6 +23,9 @@ from .services.fal_service import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _encode_job_token(model_id: str, request_id: str) -> str:
     raw = f"{model_id}|{request_id}".encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
@@ -37,6 +42,12 @@ def _decode_job_token(token: str) -> tuple[str, str]:
 
 
 def _serialize_generation_record(record: GenerationRecord) -> dict[str, Any]:
+    product_ids = [product_id for product_id in record.product_id.split(",") if product_id]
+    product_names = [
+        product_name.strip()
+        for product_name in record.product_name.split(",")
+        if product_name.strip()
+    ]
     return {
         "id": record.id,
         "job_token": record.job_token,
@@ -44,6 +55,8 @@ def _serialize_generation_record(record: GenerationRecord) -> dict[str, Any]:
         "model_label": record.model_label,
         "product_id": record.product_id,
         "product_name": record.product_name,
+        "product_ids": product_ids,
+        "product_names": product_names,
         "content_type": record.content_type,
         "language": record.language,
         "video_style": record.video_style,
@@ -79,6 +92,36 @@ def _update_generation_record(record: GenerationRecord, payload: dict[str, Any])
             "updated_at",
         ]
     )
+
+
+def _unexpected_error_response(*, context: str, exc: Exception) -> Response:
+    debug_id = uuid4().hex[:8]
+    logger.exception("%s failed [%s]", context, debug_id)
+    return Response(
+        {
+            "detail": (
+                f"{context} failed unexpectedly. "
+                f"Debug ID: {debug_id}. "
+                f"Error type: {type(exc).__name__}. "
+                "Check the Render API logs for this debug ID."
+            )
+        },
+        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+
+
+def _normalize_generation_payload(data: Any) -> Any:
+    payload = data.copy()
+    product_ids = data.getlist("product_ids") if hasattr(data, "getlist") else []
+    if not product_ids:
+        single_product_id = data.get("product_id", "") if hasattr(data, "get") else ""
+        if single_product_id:
+            product_ids = [single_product_id]
+    if hasattr(payload, "setlist"):
+        payload.setlist("product_ids", product_ids)
+    else:
+        payload["product_ids"] = product_ids
+    return payload
 
 
 class HealthView(APIView):
@@ -150,13 +193,13 @@ class GenerateContentView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
-        serializer = GenerationRequestSerializer(data=request.data)
+        serializer = GenerationRequestSerializer(data=_normalize_generation_payload(request.data))
         serializer.is_valid(raise_exception=True)
         reference_images = request.FILES.getlist("reference_images")
 
         try:
             submission = submit_generation(
-                product_id=serializer.validated_data["product_id"],
+                product_ids=serializer.validated_data["product_ids"],
                 content_type=serializer.validated_data["content_type"],
                 prompt=serializer.validated_data["prompt"],
                 language=serializer.validated_data["language"],
@@ -177,17 +220,27 @@ class GenerateContentView(APIView):
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            return _unexpected_error_response(
+                context="Generate content",
+                exc=exc,
+            )
 
         job_token = _encode_job_token(submission.model_id, submission.request_id)
-        product = PRODUCTS_BY_ID[serializer.validated_data["product_id"]]
+        selected_products = [
+            PRODUCTS_BY_ID[product_id]
+            for product_id in serializer.validated_data["product_ids"]
+        ]
         GenerationRecord.objects.update_or_create(
             job_token=job_token,
             defaults={
                 "user": request.user,
                 "model_id": submission.model_id,
                 "model_label": submission.model_label,
-                "product_id": serializer.validated_data["product_id"],
-                "product_name": product["name"],
+                "product_id": ",".join(serializer.validated_data["product_ids"]),
+                "product_name": ", ".join(
+                    product["name"] for product in selected_products
+                ),
                 "content_type": submission.content_type,
                 "language": serializer.validated_data["language"],
                 "video_style": serializer.validated_data["video_style"],
@@ -246,6 +299,11 @@ class GenerationStatusView(APIView):
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            return _unexpected_error_response(
+                context="Fetch generation status",
+                exc=exc,
             )
 
         record = GenerationRecord.objects.filter(

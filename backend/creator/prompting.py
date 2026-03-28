@@ -53,9 +53,46 @@ def _language_label(language: str) -> str:
     return LANGUAGE_LABELS.get(language, "English")
 
 
+def _unique_items(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def _build_product_context(products: list[dict[str, Any]]) -> str:
+    product_names = [product["name"] for product in products]
+    taglines = [product["tagline"] for product in products]
+    benefits = _unique_items(
+        [benefit for product in products for benefit in product["benefits"]]
+    )
+    creative_angles = _unique_items(
+        [angle for product in products for angle in product["creative_angles"]]
+    )
+    base_prompts = [product["base_prompt"] for product in products]
+
+    if len(products) == 1:
+        product = products[0]
+        return (
+            f"Product: {product['name']}. "
+            f"Positioning: {product['tagline']} "
+            f"{product['description']} "
+            f"Key benefits: {', '.join(product['benefits'])}. "
+            f"Creative angles that fit the brand: {', '.join(product['creative_angles'])}. "
+            f"{product['base_prompt']}"
+        )
+
+    return (
+        f"Products featured together: {', '.join(product_names)}. "
+        f"Blend these product positionings into one coherent Coffee 2.0 campaign: "
+        f"{' '.join(taglines)} "
+        f"Show the products as a believable lineup or bundle rather than unrelated isolated items. "
+        f"Key benefits across the lineup: {', '.join(benefits)}. "
+        f"Creative angles that fit the brand: {', '.join(creative_angles)}. "
+        f"{' '.join(base_prompts)}"
+    )
+
+
 def build_generation_prompt(
     *,
-    product: dict[str, Any],
+    products: list[dict[str, Any]],
     content_type: str,
     user_prompt: str,
     language: str,
@@ -65,14 +102,7 @@ def build_generation_prompt(
     has_reference_images: bool,
     include_audio: bool,
 ) -> str:
-    product_context = (
-        f"Product: {product['name']}. "
-        f"Positioning: {product['tagline']} "
-        f"{product['description']} "
-        f"Key benefits: {', '.join(product['benefits'])}. "
-        f"Creative angles that fit the brand: {', '.join(product['creative_angles'])}. "
-        f"{product['base_prompt']}"
-    )
+    product_context = _build_product_context(products)
 
     if has_reference_images:
         fidelity_instruction = (
@@ -212,7 +242,7 @@ def build_negative_prompt(video_style: str | None) -> str:
 
 def build_video_starter_frame_prompt(
     *,
-    product: dict[str, Any],
+    products: list[dict[str, Any]],
     user_prompt: str,
     language: str,
     video_style: str,
@@ -221,6 +251,14 @@ def build_video_starter_frame_prompt(
     has_reference_images: bool,
     include_audio: bool,
 ) -> str:
+    primary_product = products[0]
+    product_names = [product["name"] for product in products]
+    lineup_block = ""
+    if len(products) > 1:
+        lineup_block = (
+            f"Feature the selected product lineup together: {', '.join(product_names)}. "
+            "Make each selected product readable in the scene and compose them like a purposeful bundle."
+        )
     reference_block = (
         "Use the reference images only to preserve the exact real packaging, product identity, "
         "and any creator likeness the user has rights to use."
@@ -259,8 +297,13 @@ def build_video_starter_frame_prompt(
             f"If speech or voiceover is implied later, the visual setup should still feel native "
             f"to {_language_label(language)}."
         )
+        campaign_subject = (
+            primary_product["name"]
+            if len(products) == 1
+            else f"{primary_product['name']} lineup"
+        )
         style_block = (
-            f"Create a single ultra-realistic opening frame for a premium {product['name']} ad. "
+            f"Create a single ultra-realistic opening frame for a premium {campaign_subject} ad. "
             "Use cinematic composition, premium lighting, depth, foreground layering, and "
             "in-scene storytelling that feels photographed rather than rendered."
         )
@@ -272,6 +315,7 @@ def build_video_starter_frame_prompt(
     return " ".join(
         [
             style_block,
+            lineup_block,
             reference_block,
             product_block,
             VIDEO_ORIENTATION_GUIDANCE.get(video_orientation or "portrait", ""),
@@ -288,14 +332,14 @@ def build_video_starter_frame_prompt(
 
 def build_cinematic_keyframe_prompt(
     *,
-    product: dict[str, Any],
+    products: list[dict[str, Any]],
     user_prompt: str,
     language: str,
     video_orientation: str | None,
     has_reference_images: bool,
 ) -> str:
     return build_video_starter_frame_prompt(
-        product=product,
+        products=products,
         user_prompt=user_prompt,
         language=language,
         video_style="ad",

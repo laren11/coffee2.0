@@ -19,17 +19,64 @@ export class ApiError extends Error {
   }
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
+function normalizeTextPreview(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 240)
+}
+
+async function requestWithDiagnostics(
+  input: RequestInfo | URL,
+  init: RequestInit,
+): Promise<Response> {
+  const endpoint = typeof input === 'string' ? input : input.toString()
+
+  try {
+    return await fetch(input, init)
+  } catch (error) {
+    const details = [
+      'The request failed before the server returned a response.',
+      `Endpoint: ${endpoint}`,
+    ]
+
+    if (error instanceof Error && error.message) {
+      details.push(`Browser error: ${error.message}`)
+    }
+
+    details.push(
+      'Likely causes: Render cold start timeout, backend crash, CORS misconfiguration, or a temporary network drop.',
+    )
+    details.push('Open the Render API logs and retry once to capture the matching server-side error.')
+
+    throw new ApiError(details.join('\n'), 0)
+  }
+}
+
+async function parseResponse<T>(response: Response, endpoint: string): Promise<T> {
   const contentType = response.headers.get('content-type') || ''
   const data = contentType.includes('application/json')
     ? await response.json()
     : await response.text()
 
   if (!response.ok) {
+    if (typeof data === 'string') {
+      const details = [
+        `Request failed with status ${response.status}.`,
+        `Endpoint: ${endpoint}`,
+      ]
+      if (contentType.includes('text/html')) {
+        details.push(
+          'The API returned HTML instead of JSON, which usually means the backend crashed or Render served an error page.',
+        )
+      }
+      const preview = normalizeTextPreview(data)
+      if (preview) {
+        details.push(`Response preview: ${preview}`)
+      }
+      throw new ApiError(details.join('\n'), response.status)
+    }
+
     const detail =
-      typeof data === 'string'
-        ? data
-        : (data as { detail?: string }).detail || 'Something went wrong.'
+      (data as { detail?: string }).detail ||
+      `Request failed with status ${response.status} at ${endpoint}.`
     throw new ApiError(detail, response.status)
   }
 
@@ -130,14 +177,15 @@ export function clearStoredToken() {
 }
 
 export async function login(username: string, password: string): Promise<AuthResponse> {
-  const response = await fetch(`${API_BASE}/auth/login/`, {
+  const endpoint = `${API_BASE}/auth/login/`
+  const response = await requestWithDiagnostics(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ username, password }),
   })
-  const data = await parseResponse<unknown>(response)
+  const data = await parseResponse<unknown>(response, endpoint)
   return ensureUserPayload(
     data,
     'The login endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
@@ -145,10 +193,11 @@ export async function login(username: string, password: string): Promise<AuthRes
 }
 
 export async function fetchMe(token: string): Promise<AuthResponse['user']> {
-  const response = await fetch(`${API_BASE}/auth/me/`, {
+  const endpoint = `${API_BASE}/auth/me/`
+  const response = await requestWithDiagnostics(endpoint, {
     headers: buildAuthHeaders(token),
   })
-  const data = await parseResponse<unknown>(response)
+  const data = await parseResponse<unknown>(response, endpoint)
   return ensureMePayload(
     data,
     'The auth session endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
@@ -156,10 +205,11 @@ export async function fetchMe(token: string): Promise<AuthResponse['user']> {
 }
 
 export async function fetchCatalog(token: string): Promise<CatalogResponse> {
-  const response = await fetch(`${API_BASE}/products/`, {
+  const endpoint = `${API_BASE}/products/`
+  const response = await requestWithDiagnostics(endpoint, {
     headers: buildAuthHeaders(token),
   })
-  const data = await parseResponse<unknown>(response)
+  const data = await parseResponse<unknown>(response, endpoint)
   return ensureCatalogPayload(
     data,
     'The catalog endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
@@ -167,10 +217,11 @@ export async function fetchCatalog(token: string): Promise<CatalogResponse> {
 }
 
 export async function fetchHistory(token: string): Promise<GenerationHistoryResponse> {
-  const response = await fetch(`${API_BASE}/history/`, {
+  const endpoint = `${API_BASE}/history/`
+  const response = await requestWithDiagnostics(endpoint, {
     headers: buildAuthHeaders(token),
   })
-  const data = await parseResponse<unknown>(response)
+  const data = await parseResponse<unknown>(response, endpoint)
   return ensureHistoryPayload(
     data,
     'The history endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
@@ -181,7 +232,9 @@ export async function submitGeneration(
   payload: SubmitGenerationPayload,
 ): Promise<SubmitGenerationResponse> {
   const formData = new FormData()
-  formData.append('product_id', payload.productId)
+  payload.productIds.forEach((productId) => {
+    formData.append('product_ids', productId)
+  })
   formData.append('content_type', payload.contentType)
   formData.append('language', payload.language)
   formData.append('video_style', payload.videoStyle)
@@ -195,13 +248,14 @@ export async function submitGeneration(
     formData.append('reference_images', file)
   })
 
-  const response = await fetch(`${API_BASE}/generate/`, {
+  const endpoint = `${API_BASE}/generate/`
+  const response = await requestWithDiagnostics(endpoint, {
     method: 'POST',
     headers: buildAuthHeaders(payload.token),
     body: formData,
   })
 
-  return parseResponse<SubmitGenerationResponse>(response)
+  return parseResponse<SubmitGenerationResponse>(response, endpoint)
 }
 
 export async function fetchGenerationStatus(
@@ -209,8 +263,9 @@ export async function fetchGenerationStatus(
   jobToken: string,
 ): Promise<GenerationStatusResponse> {
   const params = new URLSearchParams({ token: jobToken })
-  const response = await fetch(`${API_BASE}/generate/status/?${params.toString()}`, {
+  const endpoint = `${API_BASE}/generate/status/?${params.toString()}`
+  const response = await requestWithDiagnostics(endpoint, {
     headers: buildAuthHeaders(authToken),
   })
-  return parseResponse<GenerationStatusResponse>(response)
+  return parseResponse<GenerationStatusResponse>(response, endpoint)
 }

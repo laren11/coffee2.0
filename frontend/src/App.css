@@ -223,6 +223,14 @@
   font-size: clamp(1.35rem, 2vw, 1.8rem);
 }
 
+.product-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .product-grid {
   display: grid;
   gap: 14px;
@@ -750,6 +758,7 @@ textarea:focus,
   border-radius: 16px;
   background: rgba(184, 87, 75, 0.12);
   color: #8f2f23;
+  white-space: pre-wrap;
 }
 
 .credential-hint {
@@ -946,6 +955,11 @@ textarea:focus,
   }
 
   .prompt-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .product-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
