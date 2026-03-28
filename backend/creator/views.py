@@ -20,6 +20,7 @@ from .services.fal_service import (
     FalSubmissionError,
     fetch_generation_status,
     submit_generation,
+    submit_staged_video_render,
 )
 
 
@@ -51,8 +52,10 @@ def _serialize_generation_record(record: GenerationRecord) -> dict[str, Any]:
     return {
         "id": record.id,
         "job_token": record.job_token,
+        "provider_request_id": record.provider_request_id,
         "model_id": record.model_id,
         "model_label": record.model_label,
+        "pipeline_stage": record.pipeline_stage,
         "product_id": record.product_id,
         "product_name": record.product_name,
         "product_ids": product_ids,
@@ -75,22 +78,158 @@ def _serialize_generation_record(record: GenerationRecord) -> dict[str, Any]:
 
 
 def _update_generation_record(record: GenerationRecord, payload: dict[str, Any]) -> None:
+    update_fields = ["updated_at"]
     next_state = payload.get("state")
     if next_state in {"queued", "processing", "completed", "failed"}:
         record.status = next_state
+        update_fields.append("status")
     record.error_message = payload.get("error", "") or ""
+    update_fields.append("error_message")
     if payload.get("description"):
         record.result_description = payload["description"]
+        update_fields.append("result_description")
     if payload.get("assets"):
         record.assets = payload["assets"]
-    record.save(
-        update_fields=[
-            "status",
-            "error_message",
-            "result_description",
-            "assets",
-            "updated_at",
-        ]
+        update_fields.append("assets")
+    if payload.get("pipeline_stage"):
+        record.pipeline_stage = payload["pipeline_stage"]
+        update_fields.append("pipeline_stage")
+    if payload.get("pipeline_payload") is not None:
+        record.pipeline_payload = payload["pipeline_payload"]
+        update_fields.append("pipeline_payload")
+    if payload.get("model_id"):
+        record.model_id = payload["model_id"]
+        update_fields.append("model_id")
+    if payload.get("model_label"):
+        record.model_label = payload["model_label"]
+        update_fields.append("model_label")
+    provider_request_id = payload.get("provider_request_id")
+    if provider_request_id is not None:
+        record.provider_request_id = provider_request_id
+        update_fields.append("provider_request_id")
+    record.save(update_fields=list(dict.fromkeys(update_fields)))
+
+
+def _pipeline_stage_label(*, content_type: str, pipeline_stage: str) -> str:
+    if pipeline_stage == "starter_frame":
+        return "Creating starter frame"
+    if pipeline_stage == "video_render":
+        return "Rendering final video"
+    if content_type == "image":
+        return "Generating image"
+    return "Rendering video"
+
+
+def _build_response_payload(
+    *,
+    record: GenerationRecord | None,
+    payload: dict[str, Any],
+    model_id: str,
+    request_id: str,
+) -> dict[str, Any]:
+    response_payload = dict(payload)
+    pipeline_stage = (
+        str(response_payload.get("pipeline_stage") or "")
+        or (record.pipeline_stage if record else "provider")
+    )
+    content_type = (
+        str(response_payload.get("content_type") or "")
+        or (record.content_type if record else "")
+    )
+    response_payload["model_id"] = model_id
+    response_payload["request_id"] = request_id
+    response_payload["model_label"] = response_payload.get("model_label") or (
+        record.model_label if record else ""
+    )
+    response_payload["pipeline_stage"] = pipeline_stage
+    response_payload["stage_label"] = _pipeline_stage_label(
+        content_type=content_type or "video",
+        pipeline_stage=pipeline_stage or "provider",
+    )
+    return response_payload
+
+
+def _record_provider_ids(record: GenerationRecord) -> tuple[str, str]:
+    if record.provider_request_id:
+        return record.model_id, record.provider_request_id
+    return _decode_job_token(record.job_token)
+
+
+def _starter_frame_to_video_payload(
+    *,
+    record: GenerationRecord,
+    starter_payload: dict[str, Any],
+    model_id: str,
+    request_id: str,
+) -> dict[str, Any]:
+    assets = starter_payload.get("assets") or []
+    starter_frame_url = ""
+    if assets and isinstance(assets[0], dict):
+        starter_frame_url = assets[0].get("url", "") or ""
+    if not starter_frame_url:
+        return {
+            "state": "failed",
+            "error": "fal.ai completed the starter frame job without returning an image.",
+            "logs": starter_payload.get("logs", []),
+            "pipeline_stage": "starter_frame",
+            "model_id": model_id,
+            "model_label": record.model_label,
+            "provider_request_id": request_id,
+        }
+
+    try:
+        video_submission = submit_staged_video_render(
+            pipeline_payload=record.pipeline_payload,
+            starter_frame_url=starter_frame_url,
+        )
+    except FalSubmissionError as exc:
+        return {
+            "state": "failed",
+            "error": str(exc),
+            "logs": starter_payload.get("logs", []),
+            "pipeline_stage": "starter_frame",
+            "model_id": model_id,
+            "model_label": record.model_label,
+            "provider_request_id": request_id,
+        }
+
+    kickoff_logs = list(starter_payload.get("logs", []))
+    kickoff_logs.append(
+        {
+            "message": "Starter frame approved. Submitted the final Veo 3.1 render.",
+            "timestamp": None,
+        }
+    )
+    return {
+        "state": "processing",
+        "logs": kickoff_logs,
+        "content_type": "video",
+        "pipeline_stage": video_submission.pipeline_stage,
+        "pipeline_payload": video_submission.pipeline_payload,
+        "model_id": video_submission.model_id,
+        "model_label": video_submission.model_label,
+        "provider_request_id": video_submission.request_id,
+    }
+
+
+def _fetch_status_for_record(record: GenerationRecord) -> dict[str, Any]:
+    model_id, request_id = _record_provider_ids(record)
+    payload = fetch_generation_status(model_id=model_id, request_id=request_id)
+
+    if record.pipeline_stage == "starter_frame" and payload.get("state") == "completed":
+        payload = _starter_frame_to_video_payload(
+            record=record,
+            starter_payload=payload,
+            model_id=model_id,
+            request_id=request_id,
+        )
+
+    _update_generation_record(record, payload)
+    return _build_response_payload(
+        record=record,
+        payload=payload,
+        model_id=str(payload.get("model_id") or model_id),
+        request_id=str(payload.get("provider_request_id") or request_id),
     )
 
 
@@ -235,8 +374,11 @@ class GenerateContentView(APIView):
             job_token=job_token,
             defaults={
                 "user": request.user,
+                "provider_request_id": submission.request_id,
                 "model_id": submission.model_id,
                 "model_label": submission.model_label,
+                "pipeline_stage": submission.pipeline_stage,
+                "pipeline_payload": submission.pipeline_payload,
                 "product_id": ",".join(serializer.validated_data["product_ids"]),
                 "product_name": ", ".join(
                     product["name"] for product in selected_products
@@ -262,6 +404,11 @@ class GenerateContentView(APIView):
                 "request_id": submission.request_id,
                 "model_id": submission.model_id,
                 "model_label": submission.model_label,
+                "pipeline_stage": submission.pipeline_stage,
+                "stage_label": _pipeline_stage_label(
+                    content_type=submission.content_type,
+                    pipeline_stage=submission.pipeline_stage,
+                ),
                 "content_type": submission.content_type,
                 "used_reference_images": submission.used_reference_images,
                 "guidance_note": submission.guidance_note,
@@ -280,8 +427,15 @@ class GenerationStatusView(APIView):
             )
 
         try:
+            record = GenerationRecord.objects.filter(
+                user=request.user,
+                job_token=token,
+            ).first()
+            if record:
+                return Response(_fetch_status_for_record(record))
+
             model_id, request_id = _decode_job_token(token)
-            payload: dict[str, Any] = fetch_generation_status(
+            payload = fetch_generation_status(
                 model_id=model_id,
                 request_id=request_id,
             )
@@ -306,13 +460,11 @@ class GenerationStatusView(APIView):
                 exc=exc,
             )
 
-        record = GenerationRecord.objects.filter(
-            user=request.user,
-            job_token=token,
-        ).first()
-        if record:
-            _update_generation_record(record, payload)
-
-        payload["model_id"] = model_id
-        payload["request_id"] = request_id
-        return Response(payload)
+        return Response(
+            _build_response_payload(
+                record=None,
+                payload=payload,
+                model_id=model_id,
+                request_id=request_id,
+            )
+        )

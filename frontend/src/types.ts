@@ -70,6 +70,8 @@ export type SubmitGenerationResponse = {
   request_id: string
   model_id: string
   model_label: string
+  pipeline_stage: 'provider' | 'starter_frame' | 'video_render'
+  stage_label: string
   content_type: 'image' | 'video'
   used_reference_images: boolean
   guidance_note: string
@@ -84,8 +86,10 @@ export type GeneratedAsset = {
 export type GenerationHistoryItem = {
   id: number
   job_token: string
+  provider_request_id: string
   model_id: string
   model_label: string
+  pipeline_stage: 'provider' | 'starter_frame' | 'video_render'
   product_id: string
   product_name: string
   product_ids: string[]
@@ -119,7 +123,10 @@ export type GenerationStatusResponse = {
   description?: string
   error?: string
   model_id?: string
+  model_label?: string
   request_id?: string
+  pipeline_stage?: 'provider' | 'starter_frame' | 'video_render'
+  stage_label?: string
 }
 
 export type AuthResponse = {

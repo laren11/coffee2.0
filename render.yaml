@@ -22,8 +22,6 @@ services:
         value: https://coffee-20-frontend.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
         value: https://coffee-20-frontend.onrender.com
-      - key: ENABLE_SYNC_VIDEO_STARTER_FRAME
-        value: "false"
       - key: FAL_KEY
         sync: false
       - key: DEFAULT_TEST_USERNAME

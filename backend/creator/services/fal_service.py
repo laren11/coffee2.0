@@ -4,7 +4,7 @@ import base64
 import binascii
 import mimetypes
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +22,21 @@ from creator.prompting import (
 
 TEXT_IMAGE_MODEL = "fal-ai/nano-banana-pro"
 REFERENCE_IMAGE_MODEL = "fal-ai/nano-banana-pro/edit"
-TEXT_VIDEO_MODEL = "fal-ai/veo3.1/fast"
-IMAGE_TO_VIDEO_MODEL = "fal-ai/veo3.1/fast/image-to-video"
+TEXT_VIDEO_MODEL = "fal-ai/veo3.1"
+IMAGE_TO_VIDEO_MODEL = "fal-ai/veo3.1/image-to-video"
 REFERENCE_VIDEO_MODEL = "fal-ai/veo3.1/reference-to-video"
 MAX_REFERENCE_IMAGES = 6
 MAX_REFERENCE_IMAGE_SIZE_BYTES = 8 * 1024 * 1024
+
+MODEL_LABELS = {
+    TEXT_IMAGE_MODEL: "Nano Banana Pro",
+    REFERENCE_IMAGE_MODEL: "Nano Banana Pro Edit",
+    TEXT_VIDEO_MODEL: "Veo 3.1 Text-to-Video",
+    IMAGE_TO_VIDEO_MODEL: "Veo 3.1 Image-to-Video",
+    REFERENCE_VIDEO_MODEL: "Veo 3.1 Reference-to-Video",
+    "fal-ai/veo3.1/fast": "Veo 3.1 Fast Text-to-Video",
+    "fal-ai/veo3.1/fast/image-to-video": "Veo 3.1 Fast Image-to-Video",
+}
 
 
 class FalConfigurationError(RuntimeError):
@@ -45,6 +55,8 @@ class SubmissionResult:
     content_type: str
     used_reference_images: bool
     guidance_note: str
+    pipeline_stage: str = "provider"
+    pipeline_payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -53,15 +65,6 @@ class ReferenceAssets:
     uploaded: list[str]
     product: list[str]
     creator: list[str]
-
-
-def _sync_video_starter_frames_enabled() -> bool:
-    return os.getenv("ENABLE_SYNC_VIDEO_STARTER_FRAME", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _ensure_fal_key() -> None:
@@ -77,6 +80,12 @@ def _video_duration(*, video_style: str, include_audio: bool) -> str:
     if include_audio:
         return "4s"
     return "6s"
+
+
+def _video_resolution(*, video_style: str, include_audio: bool) -> str:
+    if video_style == "ugc" or include_audio:
+        return "720p"
+    return "1080p"
 
 
 def _file_to_data_uri(upload) -> str:
@@ -158,33 +167,8 @@ def _collect_reference_assets(
     )
 
 
-def _select_model(
-    *,
-    content_type: str,
-    reference_count: int,
-    video_style: str,
-    use_sync_starter_frame: bool,
-) -> tuple[str, str]:
-    if content_type == "image":
-        if reference_count:
-            return REFERENCE_IMAGE_MODEL, "Nano Banana Pro Edit"
-        return TEXT_IMAGE_MODEL, "Nano Banana Pro"
-
-    if use_sync_starter_frame:
-        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
-    if reference_count:
-        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
-    return TEXT_VIDEO_MODEL, "Veo 3.1 Fast Text-to-Video"
-
-
 def _model_label_for_id(model_id: str) -> str:
-    return {
-        TEXT_IMAGE_MODEL: "Nano Banana Pro",
-        REFERENCE_IMAGE_MODEL: "Nano Banana Pro Edit",
-        TEXT_VIDEO_MODEL: "Veo 3.1 Fast Text-to-Video",
-        IMAGE_TO_VIDEO_MODEL: "Veo 3.1 Fast Image-to-Video",
-        REFERENCE_VIDEO_MODEL: "Veo 3.1 Reference-to-Video",
-    }[model_id]
+    return MODEL_LABELS.get(model_id, model_id)
 
 
 def _starter_frame_reference_uris(
@@ -200,18 +184,6 @@ def _starter_frame_reference_uris(
         ordered.extend(reference_assets.product)
         ordered.extend(reference_assets.creator)
     return ordered[:MAX_REFERENCE_IMAGES]
-
-
-def _choose_video_anchor_image_url(
-    *,
-    video_style: str,
-    reference_assets: ReferenceAssets,
-) -> str:
-    ordered = _starter_frame_reference_uris(
-        video_style=video_style,
-        reference_assets=reference_assets,
-    )
-    return ordered[0] if ordered else ""
 
 
 def _extract_first_image_url(result: Any) -> str:
@@ -235,96 +207,17 @@ def _extract_first_image_url(result: Any) -> str:
     return getattr(first_image, "url", "") or ""
 
 
-def _request_video_starter_frame(
-    *,
-    prompt_text: str,
-    video_orientation: str,
-    reference_uris: list[str],
-) -> str:
-    arguments: dict[str, Any] = {
-        "prompt": prompt_text,
-        "aspect_ratio": "16:9" if video_orientation == "landscape" else "9:16",
-        "resolution": "2K",
-        "num_images": 1,
-    }
-    model_id = TEXT_IMAGE_MODEL
-    if reference_uris:
-        model_id = REFERENCE_IMAGE_MODEL
-        arguments["image_urls"] = reference_uris
-        arguments["limit_generations"] = True
-
+def _submit_provider_request(model_id: str, arguments: dict[str, Any]) -> str:
     try:
-        result = fal_client.subscribe(model_id, arguments)
+        handle = fal_client.submit(model_id, arguments)
     except Exception as exc:  # pragma: no cover - network/provider failure
-        raise FalSubmissionError(
-            "Unable to prepare the opening frame for the video."
-        ) from exc
-
-    image_url = _extract_first_image_url(result)
-    if not image_url:
-        raise FalSubmissionError(
-            "fal.ai did not return a usable starter frame for the video."
-        )
-    return image_url
+        raise FalSubmissionError(str(exc)) from exc
+    return handle.request_id
 
 
-def _generate_video_starter_frame_url(
+def _build_image_arguments(
     *,
     product_ids: list[str],
-    prompt: str,
-    language: str,
-    video_style: str,
-    video_orientation: str,
-    ugc_creator_id: str,
-    include_audio: bool,
-    reference_assets: ReferenceAssets,
-) -> str:
-    products = [PRODUCTS_BY_ID[product_id] for product_id in product_ids]
-    ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
-    primary_reference_uris = _starter_frame_reference_uris(
-        video_style=video_style,
-        reference_assets=reference_assets,
-    )
-    prompt_text = build_video_starter_frame_prompt(
-        products=products,
-        user_prompt=prompt,
-        language=language,
-        video_style=video_style,
-        video_orientation=video_orientation,
-        ugc_creator=ugc_creator,
-        has_reference_images=bool(primary_reference_uris),
-        include_audio=include_audio,
-    )
-    attempt_reference_sets = [primary_reference_uris]
-    if reference_assets.product:
-        attempt_reference_sets.append(reference_assets.product[:MAX_REFERENCE_IMAGES])
-    attempt_reference_sets.append([])
-
-    seen_reference_sets: set[tuple[str, ...]] = set()
-    last_error: FalSubmissionError | None = None
-    for reference_uris in attempt_reference_sets:
-        reference_key = tuple(reference_uris)
-        if reference_key in seen_reference_sets:
-            continue
-        seen_reference_sets.add(reference_key)
-        try:
-            return _request_video_starter_frame(
-                prompt_text=prompt_text,
-                video_orientation=video_orientation,
-                reference_uris=reference_uris,
-            )
-        except FalSubmissionError as exc:
-            last_error = exc
-
-    if last_error:
-        raise last_error
-    raise FalSubmissionError("Unable to prepare the opening frame for the video.")
-
-
-def _build_arguments(
-    *,
-    product_ids: list[str],
-    content_type: str,
     prompt: str,
     language: str,
     aspect_ratio: str,
@@ -333,7 +226,7 @@ def _build_arguments(
     ugc_creator_id: str,
     include_audio: bool,
     reference_images: list,
-) -> tuple[str, dict[str, Any], bool, bool]:
+) -> tuple[str, dict[str, Any], bool]:
     products = [PRODUCTS_BY_ID[product_id] for product_id in product_ids]
     ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
     reference_assets = _collect_reference_assets(
@@ -342,21 +235,11 @@ def _build_arguments(
         reference_images=reference_images,
     )
     reference_data_uris = reference_assets.combined
-    use_sync_starter_frame = (
-        content_type == "video" and _sync_video_starter_frames_enabled()
-    )
-    model_id, _ = _select_model(
-        content_type=content_type,
-        reference_count=len(reference_data_uris),
-        video_style=video_style or "ad",
-        use_sync_starter_frame=use_sync_starter_frame,
-    )
     has_reference_images = bool(reference_data_uris)
-    used_generated_starter_frame = False
 
     full_prompt = build_generation_prompt(
         products=products,
-        content_type=content_type,
+        content_type="image",
         user_prompt=prompt,
         language=language,
         video_style=video_style,
@@ -366,55 +249,111 @@ def _build_arguments(
         include_audio=include_audio,
     )
 
-    if content_type == "image":
-        arguments: dict[str, Any] = {
-            "prompt": full_prompt,
-            "aspect_ratio": aspect_ratio,
-            "resolution": "2K",
-            "num_images": 1,
-            "output_format": "webp",
-        }
-        if has_reference_images:
-            arguments["image_urls"] = reference_data_uris
-            arguments["limit_generations"] = True
-        return model_id, arguments, has_reference_images, used_generated_starter_frame
-
-    arguments = {
+    arguments: dict[str, Any] = {
         "prompt": full_prompt,
         "aspect_ratio": aspect_ratio,
-        "duration": _video_duration(
-            video_style=video_style or "ad",
+        "resolution": "2K",
+        "num_images": 1,
+        "output_format": "webp",
+    }
+    model_id = TEXT_IMAGE_MODEL
+    if has_reference_images:
+        model_id = REFERENCE_IMAGE_MODEL
+        arguments["image_urls"] = reference_data_uris
+        arguments["limit_generations"] = True
+
+    return model_id, arguments, has_reference_images
+
+
+def _build_video_pipeline(
+    *,
+    product_ids: list[str],
+    prompt: str,
+    language: str,
+    aspect_ratio: str,
+    video_style: str,
+    video_orientation: str,
+    ugc_creator_id: str,
+    include_audio: bool,
+    reference_images: list,
+) -> tuple[str, dict[str, Any], bool, dict[str, Any], str]:
+    products = [PRODUCTS_BY_ID[product_id] for product_id in product_ids]
+    ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
+    reference_assets = _collect_reference_assets(
+        product_ids=product_ids,
+        ugc_creator_id=ugc_creator_id,
+        reference_images=reference_images,
+    )
+    starter_reference_uris = _starter_frame_reference_uris(
+        video_style=video_style,
+        reference_assets=reference_assets,
+    )
+    has_reference_images = bool(reference_assets.combined)
+
+    starter_prompt = build_video_starter_frame_prompt(
+        products=products,
+        user_prompt=prompt,
+        language=language,
+        video_style=video_style,
+        video_orientation=video_orientation,
+        ugc_creator=ugc_creator,
+        has_reference_images=bool(starter_reference_uris),
+        include_audio=include_audio,
+    )
+    starter_arguments: dict[str, Any] = {
+        "prompt": starter_prompt,
+        "aspect_ratio": aspect_ratio,
+        "resolution": "2K",
+        "num_images": 1,
+        "output_format": "webp",
+    }
+    starter_model_id = TEXT_IMAGE_MODEL
+    starter_model_label = "Nano Banana Pro Starter Frame"
+    if starter_reference_uris:
+        starter_model_id = REFERENCE_IMAGE_MODEL
+        starter_model_label = "Nano Banana Pro Edit Starter Frame"
+        starter_arguments["image_urls"] = starter_reference_uris
+        starter_arguments["limit_generations"] = True
+
+    final_model_id = IMAGE_TO_VIDEO_MODEL
+    final_arguments = {
+        "prompt": build_generation_prompt(
+            products=products,
+            content_type="video",
+            user_prompt=prompt,
+            language=language,
+            video_style=video_style,
+            video_orientation=video_orientation,
+            ugc_creator=ugc_creator,
+            has_reference_images=has_reference_images,
             include_audio=include_audio,
         ),
-        "resolution": "720p",
+        "aspect_ratio": aspect_ratio,
+        "duration": _video_duration(
+            video_style=video_style,
+            include_audio=include_audio,
+        ),
+        "resolution": _video_resolution(
+            video_style=video_style,
+            include_audio=include_audio,
+        ),
         "generate_audio": include_audio,
         "negative_prompt": build_negative_prompt(video_style),
         "auto_fix": True,
     }
-
-    if use_sync_starter_frame:
-        starter_frame_url = _generate_video_starter_frame_url(
-            product_ids=product_ids,
-            prompt=prompt,
-            language=language,
-            video_style=video_style or "ad",
-            video_orientation=video_orientation or "portrait",
-            ugc_creator_id=ugc_creator_id,
-            include_audio=include_audio,
-            reference_assets=reference_assets,
-        )
-        used_generated_starter_frame = True
-        arguments["image_url"] = starter_frame_url
-        return model_id, arguments, has_reference_images, used_generated_starter_frame
-
-    if model_id == IMAGE_TO_VIDEO_MODEL:
-        anchor_image_url = _choose_video_anchor_image_url(
-            video_style=video_style or "ad",
-            reference_assets=reference_assets,
-        )
-        if anchor_image_url:
-            arguments["image_url"] = anchor_image_url
-    return model_id, arguments, has_reference_images, used_generated_starter_frame
+    pipeline_payload = {
+        "final_model_id": final_model_id,
+        "final_model_label": _model_label_for_id(final_model_id),
+        "final_arguments": final_arguments,
+        "used_reference_images": has_reference_images,
+    }
+    return (
+        starter_model_id,
+        starter_arguments,
+        has_reference_images,
+        pipeline_payload,
+        starter_model_label,
+    )
 
 
 def submit_generation(
@@ -431,48 +370,66 @@ def submit_generation(
     reference_images: list,
 ) -> SubmissionResult:
     _ensure_fal_key()
+    resolved_video_style = video_style or "ad"
+    resolved_video_orientation = video_orientation or "portrait"
     video_duration = _video_duration(
-        video_style=video_style or "ad",
+        video_style=resolved_video_style,
         include_audio=include_audio,
     )
+    video_resolution = _video_resolution(
+        video_style=resolved_video_style,
+        include_audio=include_audio,
+    )
+
     try:
-        model_id, arguments, used_reference_images, used_generated_starter_frame = (
-            _build_arguments(
+        if content_type == "image":
+            model_id, arguments, used_reference_images = _build_image_arguments(
                 product_ids=product_ids,
-                content_type=content_type,
                 prompt=prompt,
                 language=language,
                 aspect_ratio=aspect_ratio,
-                video_style=video_style,
-                video_orientation=video_orientation,
+                video_style=resolved_video_style,
+                video_orientation=resolved_video_orientation,
                 ugc_creator_id=ugc_creator_id,
                 include_audio=include_audio,
                 reference_images=reference_images,
             )
-        )
+            model_label = _model_label_for_id(model_id)
+            request_id = _submit_provider_request(model_id, arguments)
+            pipeline_stage = "provider"
+            pipeline_payload: dict[str, Any] = {}
+        else:
+            (
+                model_id,
+                arguments,
+                used_reference_images,
+                pipeline_payload,
+                model_label,
+            ) = _build_video_pipeline(
+                product_ids=product_ids,
+                prompt=prompt,
+                language=language,
+                aspect_ratio=aspect_ratio,
+                video_style=resolved_video_style,
+                video_orientation=resolved_video_orientation,
+                ugc_creator_id=ugc_creator_id,
+                include_audio=include_audio,
+                reference_images=reference_images,
+            )
+            request_id = _submit_provider_request(model_id, arguments)
+            pipeline_stage = "starter_frame"
     except FalSubmissionError:
         raise
     except Exception as exc:
         raise FalSubmissionError(
             "Unable to prepare the generation request. Try shortening the prompt or removing the creator reference photo and try again."
         ) from exc
-    model_label = _model_label_for_id(model_id)
-
-    try:
-        handle = fal_client.submit(model_id, arguments)
-    except Exception as exc:  # pragma: no cover - network/provider failure
-        raise FalSubmissionError(str(exc)) from exc
 
     guidance_chunks = []
     if content_type == "video":
-        if used_generated_starter_frame:
-            guidance_chunks.append(
-                f"Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot. Clip length is set to {video_duration} for faster turnaround."
-            )
-        else:
-            guidance_chunks.append(
-                f"Video generation uses the faster direct Veo 3.1 Fast submission flow so the hosted app can return a job immediately and avoid request timeouts. Clip length is set to {video_duration} for faster turnaround."
-            )
+        guidance_chunks.append(
+            f"Video generation now runs in two steps: first a premium starter frame is created with {model_label}, then it is animated with Veo 3.1 Image-to-Video for better product fidelity, more realistic motion, and a stronger opening shot. The final render targets {video_resolution} at {video_duration}."
+        )
     if len(product_ids) > 1:
         guidance_chunks.append(
             "Multiple selected products were blended into one combined campaign prompt and shared visual setup."
@@ -485,26 +442,60 @@ def submit_generation(
         guidance_chunks.append(
             "No reference photos were available, so the result may drift from the exact real-world packaging."
         )
-    if used_generated_starter_frame:
+    if content_type == "video":
         guidance_chunks.append(
-            "The video should open on a generated scene frame instead of the untouched uploaded packshot."
+            "The video should open from a generated in-scene shot, not from the untouched uploaded packshot."
         )
-    if content_type == "video" and video_style == "ugc":
+    if content_type == "video" and resolved_video_style == "ugc":
         guidance_chunks.append(
-            "UGC audio is locked on and the prompt keeps the creator speaking in the selected language."
+            "UGC audio is locked on and the prompt keeps the creator speaking clearly in the selected language."
         )
     elif content_type == "video" and include_audio:
         guidance_chunks.append(
-            "Audio generation is enabled, but the cleanest ad voiceovers still usually come from a separate dedicated voice tool."
+            "Audio generation is enabled, but the cleanest ad voiceovers still usually come from a dedicated voice tool."
         )
 
     return SubmissionResult(
         model_id=model_id,
         model_label=model_label,
-        request_id=handle.request_id,
+        request_id=request_id,
         content_type=content_type,
         used_reference_images=used_reference_images,
         guidance_note=" ".join(guidance_chunks),
+        pipeline_stage=pipeline_stage,
+        pipeline_payload=pipeline_payload,
+    )
+
+
+def submit_staged_video_render(
+    *,
+    pipeline_payload: dict[str, Any],
+    starter_frame_url: str,
+) -> SubmissionResult:
+    _ensure_fal_key()
+    final_model_id = str(pipeline_payload.get("final_model_id") or "")
+    if not final_model_id:
+        raise FalSubmissionError("Video pipeline is missing its final Veo model.")
+
+    arguments = dict(pipeline_payload.get("final_arguments") or {})
+    if not arguments:
+        raise FalSubmissionError("Video pipeline is missing its final render arguments.")
+
+    arguments["image_url"] = starter_frame_url
+    request_id = _submit_provider_request(final_model_id, arguments)
+
+    return SubmissionResult(
+        model_id=final_model_id,
+        model_label=str(
+            pipeline_payload.get("final_model_label")
+            or _model_label_for_id(final_model_id)
+        ),
+        request_id=request_id,
+        content_type="video",
+        used_reference_images=bool(pipeline_payload.get("used_reference_images")),
+        guidance_note="",
+        pipeline_stage="video_render",
+        pipeline_payload={},
     )
 
 

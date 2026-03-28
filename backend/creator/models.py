@@ -11,6 +11,11 @@ class GenerationRecord(models.Model):
         ("completed", "Completed"),
         ("failed", "Failed"),
     ]
+    PIPELINE_STAGE_CHOICES = [
+        ("provider", "Provider"),
+        ("starter_frame", "Starter Frame"),
+        ("video_render", "Video Render"),
+    ]
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -18,8 +23,15 @@ class GenerationRecord(models.Model):
         related_name="generation_records",
     )
     job_token = models.CharField(max_length=255, unique=True)
+    provider_request_id = models.CharField(max_length=255, blank=True)
     model_id = models.CharField(max_length=255)
     model_label = models.CharField(max_length=255)
+    pipeline_stage = models.CharField(
+        max_length=30,
+        choices=PIPELINE_STAGE_CHOICES,
+        default="provider",
+    )
+    pipeline_payload = models.JSONField(default=dict, blank=True)
     product_id = models.CharField(max_length=100)
     product_name = models.CharField(max_length=255)
     content_type = models.CharField(max_length=20)

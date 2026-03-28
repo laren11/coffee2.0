@@ -39,12 +39,13 @@ VIDEO_ORIENTATION_GUIDANCE = {
 VIDEO_SEQUENCE_GUIDANCE = {
     "ugc": (
         "Structure the video with a fast hook in the first 2 seconds, one believable proof "
-        "or demo moment, a clear product interaction, and a satisfying closing takeaway."
+        "or demo moment, a clear product interaction, the product name or packaging visible "
+        "early, and a satisfying closing takeaway."
     ),
     "ad": (
         "Structure the video like a premium ad: an in-scene cinematic hook, dynamic benefit "
-        "cutaways, persuasive product proof, tasteful pacing changes, and a clean closing "
-        "hero moment."
+        "cutaways, persuasive product proof, a readable product reveal in the first third of "
+        "the clip, tasteful pacing changes, and a clean closing hero moment."
     ),
 }
 
@@ -120,7 +121,8 @@ def build_generation_prompt(
         "Prioritize realistic lighting, accurate physics, premium materials, natural skin, "
         "clean motion, believable environments, and a high-trust commercial finish. Avoid "
         "cheap CGI, floating objects, warped packaging, broken anatomy, random text overlays, "
-        "subtitles, watermarks, clutter, or generic AI aesthetics."
+        "subtitles, watermarks, clutter, or generic AI aesthetics. Make the selected product "
+        "or product lineup visibly present and recognizable, not implied off-screen."
     )
     language_block = (
         f"All spoken dialogue, captions, voiceover, and any CTA text must be in "
@@ -144,6 +146,10 @@ def build_generation_prompt(
             "texture, and premium but believable staging."
         )
         opening_guardrail = ""
+        product_visibility_block = (
+            "Keep the selected product or lineup prominently visible and recognizable in the "
+            "frame so the ad does not drift into a generic lifestyle scene."
+        )
         audio_block = ""
     else:
         resolved_video_style = video_style or "ad"
@@ -160,6 +166,11 @@ def build_generation_prompt(
             "Do not open on a flat static centered packshot or directly on the untouched "
             "reference image. Start inside a cinematic real-world moment or natural creator "
             "setup, then reveal the product organically."
+        )
+        product_visibility_block = (
+            "Ensure the product is actually on screen and recognizable. The selected product "
+            "or lineup should appear in-frame in the opening beats and remain clearly connected "
+            "to the story, not disappear into generic lifestyle footage."
         )
         if include_audio:
             if resolved_video_style == "ugc":
@@ -209,6 +220,7 @@ def build_generation_prompt(
             language_block,
             user_brief_block,
             shared_quality_bar,
+            product_visibility_block,
             f"Creative brief from the user: {user_prompt.strip()}",
         ]
         if block
@@ -289,7 +301,8 @@ def build_video_starter_frame_prompt(
         )
         product_block = (
             "The product should be present naturally in-hand, on a counter, on a desk, or being "
-            "introduced into the scene, not as a flat centered packshot."
+            "introduced into the scene, not as a flat centered packshot. Keep the packaging readable "
+            "and unmistakably connected to the creator."
         )
     else:
         creator_block = ""
@@ -309,7 +322,8 @@ def build_video_starter_frame_prompt(
         )
         product_block = (
             "The product should be integrated into the environment or motion setup naturally, "
-            "not staged as a plain background catalog packshot."
+            "not staged as a plain background catalog packshot. Make the selected product or lineup "
+            "clearly visible in the opening frame."
         )
 
     return " ".join(

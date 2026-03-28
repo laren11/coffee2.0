@@ -46,6 +46,7 @@ type AuthPhase = 'checking' | 'logged_out' | 'logging_in' | 'ready'
 type ActiveJob = {
   token: string
   modelLabel: string
+  stageLabel: string
   contentType: ContentType
   guidanceNote: string
   usedReferenceImages: boolean
@@ -580,6 +581,17 @@ function App() {
         setStatusLogs(nextLogs)
         setSubmissionError(status.error || '')
         setQueuePosition(status.queue_position ?? null)
+        if (status.model_label || status.stage_label) {
+          setActiveJob((current) =>
+            current
+              ? {
+                  ...current,
+                  modelLabel: status.model_label || current.modelLabel,
+                  stageLabel: status.stage_label || current.stageLabel,
+                }
+              : current,
+          )
+        }
 
         if (status.state === 'queued') {
           setPhase('queued')
@@ -690,6 +702,7 @@ function App() {
         setActiveJob({
           token: response.job_token,
           modelLabel: response.model_label,
+          stageLabel: response.stage_label,
           contentType: response.content_type,
           guidanceNote: response.guidance_note,
           usedReferenceImages: response.used_reference_images,
@@ -1238,8 +1251,10 @@ function App() {
                 <strong>
                   {phase === 'idle' && 'Ready to generate'}
                   {phase === 'submitting' && 'Sending job to fal.ai'}
-                  {phase === 'queued' && 'Job queued'}
-                  {phase === 'processing' && 'Generation in progress'}
+                  {phase === 'queued' &&
+                    (activeJob?.stageLabel ? `${activeJob.stageLabel} queued` : 'Job queued')}
+                  {phase === 'processing' &&
+                    (activeJob?.stageLabel || 'Generation in progress')}
                   {phase === 'completed' && 'Generation completed'}
                   {phase === 'failed' && 'Generation failed'}
                 </strong>

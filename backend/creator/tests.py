@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -8,10 +9,10 @@ from creator.models import GenerationRecord
 from creator.prompting import build_generation_prompt, build_video_starter_frame_prompt
 from creator.services.fal_service import (
     IMAGE_TO_VIDEO_MODEL,
-    FalSubmissionError,
-    ReferenceAssets,
-    _build_arguments,
-    _generate_video_starter_frame_url,
+    REFERENCE_IMAGE_MODEL,
+    TEXT_IMAGE_MODEL,
+    submit_generation,
+    submit_staged_video_render,
 )
 
 
@@ -113,122 +114,93 @@ class PromptingTests(SimpleTestCase):
 
 
 class FalServiceTests(SimpleTestCase):
-    @patch("creator.services.fal_service._sync_video_starter_frames_enabled", return_value=True)
-    @patch("creator.services.fal_service._generate_video_starter_frame_url")
-    def test_video_arguments_use_generated_starter_frame(
-        self, starter_frame_mock, sync_starter_frame_mock
+    @patch("creator.services.fal_service._submit_provider_request", return_value="starter-req")
+    def test_video_submission_queues_starter_frame_then_quality_video(
+        self, submit_provider_request_mock
     ):
-        starter_frame_mock.return_value = "https://example.com/starter-frame.webp"
-
-        model_id, arguments, has_reference_images, used_generated_starter_frame = (
-            _build_arguments(
-                product_ids=["coffee-2-0"],
-                content_type="video",
-                prompt="Create a cinematic performance ad.",
-                language="en",
-                aspect_ratio="16:9",
-                video_style="ad",
-                video_orientation="landscape",
-                ugc_creator_id="",
-                include_audio=False,
-                reference_images=[],
-            )
-        )
-
-        self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
-        self.assertEqual(arguments["image_url"], starter_frame_mock.return_value)
-        self.assertEqual(arguments["duration"], "6s")
-        self.assertIsInstance(has_reference_images, bool)
-        self.assertTrue(used_generated_starter_frame)
-        starter_frame_mock.assert_called_once()
-        sync_starter_frame_mock.assert_called_once()
-
-    @patch("creator.services.fal_service._sync_video_starter_frames_enabled", return_value=False)
-    def test_video_arguments_default_to_non_blocking_submission(
-        self, sync_starter_frame_mock
-    ):
-        model_id, arguments, has_reference_images, used_generated_starter_frame = (
-            _build_arguments(
-                product_ids=["coffee-2-0"],
-                content_type="video",
-                prompt="Create a cinematic performance ad.",
-                language="en",
-                aspect_ratio="16:9",
-                video_style="ad",
-                video_orientation="landscape",
-                ugc_creator_id="",
-                include_audio=False,
-                reference_images=[],
-            )
-        )
-
-        self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
-        self.assertFalse(used_generated_starter_frame)
-        self.assertIn("image_url", arguments)
-        self.assertEqual(arguments["duration"], "6s")
-        self.assertIsInstance(has_reference_images, bool)
-        sync_starter_frame_mock.assert_called_once()
-
-    @patch("creator.services.fal_service._sync_video_starter_frames_enabled", return_value=False)
-    def test_ugc_video_defaults_to_shorter_duration(self, sync_starter_frame_mock):
-        model_id, arguments, has_reference_images, used_generated_starter_frame = (
-            _build_arguments(
-                product_ids=["coffee-2-0"],
-                content_type="video",
-                prompt="Create a founder testimonial.",
-                language="en",
-                aspect_ratio="9:16",
-                video_style="ugc",
-                video_orientation="portrait",
-                ugc_creator_id="founder",
-                include_audio=True,
-                reference_images=[],
-            )
-        )
-
-        self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
-        self.assertEqual(arguments["duration"], "4s")
-        self.assertFalse(used_generated_starter_frame)
-        self.assertIsInstance(has_reference_images, bool)
-        sync_starter_frame_mock.assert_called_once()
-
-    @patch("creator.services.fal_service._request_video_starter_frame")
-    def test_video_starter_frame_falls_back_without_creator_refs(
-        self, starter_frame_request_mock
-    ):
-        starter_frame_request_mock.side_effect = [
-            FalSubmissionError("Creator reference rejected."),
-            "https://example.com/fallback-frame.webp",
-        ]
-
-        starter_frame_url = _generate_video_starter_frame_url(
+        submission = submit_generation(
             product_ids=["coffee-2-0"],
-            prompt="Confident founder testimonial in a premium office.",
+            content_type="video",
+            prompt="Create a cinematic performance ad.",
             language="en",
+            aspect_ratio="16:9",
+            video_style="ad",
+            video_orientation="landscape",
+            ugc_creator_id="",
+            include_audio=False,
+            reference_images=[],
+        )
+
+        self.assertEqual(submission.pipeline_stage, "starter_frame")
+        self.assertEqual(submission.request_id, "starter-req")
+        self.assertEqual(submission.model_id, REFERENCE_IMAGE_MODEL)
+        self.assertEqual(
+            submission.pipeline_payload["final_model_id"], IMAGE_TO_VIDEO_MODEL
+        )
+        self.assertEqual(
+            submission.pipeline_payload["final_arguments"]["duration"], "6s"
+        )
+        self.assertEqual(
+            submission.pipeline_payload["final_arguments"]["resolution"], "1080p"
+        )
+        self.assertIn("two steps", submission.guidance_note)
+        submit_provider_request_mock.assert_called_once()
+
+    @patch("creator.services.fal_service._submit_provider_request", return_value="starter-req")
+    def test_ugc_video_defaults_to_shorter_duration_and_audio(
+        self, submit_provider_request_mock
+    ):
+        submission = submit_generation(
+            product_ids=["coffee-2-0"],
+            content_type="video",
+            prompt="Create a founder testimonial.",
+            language="en",
+            aspect_ratio="9:16",
             video_style="ugc",
             video_orientation="portrait",
             ugc_creator_id="founder",
             include_audio=True,
-            reference_assets=ReferenceAssets(
-                combined=[
-                    "data:image/png;base64,product",
-                    "data:image/png;base64,creator",
-                ],
-                uploaded=[],
-                product=["data:image/png;base64,product"],
-                creator=["data:image/png;base64,creator"],
-            ),
+            reference_images=[],
         )
 
-        self.assertEqual(starter_frame_url, "https://example.com/fallback-frame.webp")
-        self.assertEqual(starter_frame_request_mock.call_count, 2)
+        self.assertEqual(submission.pipeline_stage, "starter_frame")
         self.assertEqual(
-            starter_frame_request_mock.call_args_list[0].kwargs["reference_uris"],
-            ["data:image/png;base64,creator", "data:image/png;base64,product"],
+            submission.pipeline_payload["final_arguments"]["duration"], "4s"
         )
         self.assertEqual(
-            starter_frame_request_mock.call_args_list[1].kwargs["reference_uris"],
-            ["data:image/png;base64,product"],
+            submission.pipeline_payload["final_arguments"]["resolution"], "720p"
+        )
+        self.assertTrue(
+            submission.pipeline_payload["final_arguments"]["generate_audio"]
+        )
+        submit_provider_request_mock.assert_called_once()
+
+    @patch("creator.services.fal_service._submit_provider_request", return_value="video-req")
+    def test_staged_video_render_uses_generated_starter_frame(
+        self, submit_provider_request_mock
+    ):
+        submission = submit_staged_video_render(
+            pipeline_payload={
+                "final_model_id": IMAGE_TO_VIDEO_MODEL,
+                "final_model_label": "Veo 3.1 Image-to-Video",
+                "final_arguments": {
+                    "prompt": "Create a premium ad.",
+                    "aspect_ratio": "16:9",
+                    "duration": "6s",
+                    "resolution": "1080p",
+                    "generate_audio": False,
+                },
+                "used_reference_images": True,
+            },
+            starter_frame_url="https://example.com/starter-frame.webp",
+        )
+
+        self.assertEqual(submission.pipeline_stage, "video_render")
+        self.assertEqual(submission.model_id, IMAGE_TO_VIDEO_MODEL)
+        self.assertEqual(submission.request_id, "video-req")
+        self.assertEqual(
+            submit_provider_request_mock.call_args.args[1]["image_url"],
+            "https://example.com/starter-frame.webp",
         )
 
 
@@ -240,6 +212,29 @@ class ApiTests(TestCase):
         )
         self.token = Token.objects.create(user=self.user)
         self.auth_headers = {"HTTP_AUTHORIZATION": f"Token {self.token.key}"}
+
+    def _mock_submission(
+        self,
+        *,
+        model_id: str,
+        model_label: str,
+        request_id: str,
+        content_type: str,
+        used_reference_images: bool,
+        guidance_note: str,
+        pipeline_stage: str = "provider",
+        pipeline_payload: dict | None = None,
+    ):
+        return SimpleNamespace(
+            model_id=model_id,
+            model_label=model_label,
+            request_id=request_id,
+            content_type=content_type,
+            used_reference_images=used_reference_images,
+            guidance_note=guidance_note,
+            pipeline_stage=pipeline_stage,
+            pipeline_payload=pipeline_payload or {},
+        )
 
     def test_login_endpoint_returns_token(self):
         response = self.client.post(
@@ -253,12 +248,14 @@ class ApiTests(TestCase):
 
     @patch("creator.views.submit_generation")
     def test_generate_endpoint_returns_job_token(self, submit_generation_mock):
-        submit_generation_mock.return_value.model_id = "fal-ai/nano-banana"
-        submit_generation_mock.return_value.model_label = "Nano Banana"
-        submit_generation_mock.return_value.request_id = "req-123"
-        submit_generation_mock.return_value.content_type = "image"
-        submit_generation_mock.return_value.used_reference_images = False
-        submit_generation_mock.return_value.guidance_note = "No reference photos."
+        submit_generation_mock.return_value = self._mock_submission(
+            model_id="fal-ai/nano-banana",
+            model_label="Nano Banana",
+            request_id="req-123",
+            content_type="image",
+            used_reference_images=False,
+            guidance_note="No reference photos.",
+        )
 
         response = self.client.post(
             "/api/generate/",
@@ -280,12 +277,14 @@ class ApiTests(TestCase):
 
     @patch("creator.views.submit_generation")
     def test_generate_endpoint_accepts_multiple_products(self, submit_generation_mock):
-        submit_generation_mock.return_value.model_id = "fal-ai/nano-banana"
-        submit_generation_mock.return_value.model_label = "Nano Banana"
-        submit_generation_mock.return_value.request_id = "req-multi"
-        submit_generation_mock.return_value.content_type = "image"
-        submit_generation_mock.return_value.used_reference_images = True
-        submit_generation_mock.return_value.guidance_note = "Multi-product prompt."
+        submit_generation_mock.return_value = self._mock_submission(
+            model_id="fal-ai/nano-banana",
+            model_label="Nano Banana",
+            request_id="req-multi",
+            content_type="image",
+            used_reference_images=True,
+            guidance_note="Multi-product prompt.",
+        )
 
         response = self.client.post(
             "/api/generate/",
@@ -307,12 +306,20 @@ class ApiTests(TestCase):
 
     @patch("creator.views.submit_generation")
     def test_generate_endpoint_accepts_legacy_founder_alias(self, submit_generation_mock):
-        submit_generation_mock.return_value.model_id = "fal-ai/veo3.1/fast"
-        submit_generation_mock.return_value.model_label = "Veo 3.1 Fast Text-to-Video"
-        submit_generation_mock.return_value.request_id = "req-legacy-founder"
-        submit_generation_mock.return_value.content_type = "video"
-        submit_generation_mock.return_value.used_reference_images = False
-        submit_generation_mock.return_value.guidance_note = "Fast pipeline."
+        submit_generation_mock.return_value = self._mock_submission(
+            model_id=REFERENCE_IMAGE_MODEL,
+            model_label="Nano Banana Pro Edit Starter Frame",
+            request_id="req-legacy-founder",
+            content_type="video",
+            used_reference_images=False,
+            guidance_note="Starter-frame pipeline.",
+            pipeline_stage="starter_frame",
+            pipeline_payload={
+                "final_model_id": IMAGE_TO_VIDEO_MODEL,
+                "final_model_label": "Veo 3.1 Image-to-Video",
+                "final_arguments": {"prompt": "Founder testimonial."},
+            },
+        )
 
         response = self.client.post(
             "/api/generate/",
@@ -374,6 +381,73 @@ class ApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["state"], "completed")
+
+    @patch("creator.views.submit_staged_video_render")
+    @patch("creator.views.fetch_generation_status")
+    def test_status_endpoint_advances_starter_frame_pipeline(
+        self,
+        status_mock,
+        submit_staged_video_render_mock,
+    ):
+        GenerationRecord.objects.create(
+            user=self.user,
+            job_token="job-starter",
+            provider_request_id="starter-req",
+            model_id=REFERENCE_IMAGE_MODEL,
+            model_label="Nano Banana Pro Edit Starter Frame",
+            pipeline_stage="starter_frame",
+            pipeline_payload={
+                "final_model_id": IMAGE_TO_VIDEO_MODEL,
+                "final_model_label": "Veo 3.1 Image-to-Video",
+                "final_arguments": {
+                    "prompt": "Create a premium founder video.",
+                    "aspect_ratio": "9:16",
+                    "duration": "4s",
+                    "resolution": "720p",
+                    "generate_audio": True,
+                },
+            },
+            product_id="coffee-2-0",
+            product_name="Coffee 2.0",
+            content_type="video",
+            language="en",
+            video_style="ugc",
+            video_orientation="portrait",
+            aspect_ratio="9:16",
+            prompt="Founder video.",
+            status="processing",
+            used_reference_images=True,
+        )
+        status_mock.return_value = {
+            "state": "completed",
+            "content_type": "image",
+            "assets": [{"url": "https://example.com/starter.png"}],
+            "logs": [],
+        }
+        submit_staged_video_render_mock.return_value = self._mock_submission(
+            model_id=IMAGE_TO_VIDEO_MODEL,
+            model_label="Veo 3.1 Image-to-Video",
+            request_id="video-req",
+            content_type="video",
+            used_reference_images=True,
+            guidance_note="",
+            pipeline_stage="video_render",
+        )
+
+        response = self.client.get(
+            "/api/generate/status/",
+            {"token": "job-starter"},
+            **self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "processing")
+        self.assertEqual(response.json()["pipeline_stage"], "video_render")
+        self.assertEqual(response.json()["request_id"], "video-req")
+
+        record = GenerationRecord.objects.get(job_token="job-starter")
+        self.assertEqual(record.pipeline_stage, "video_render")
+        self.assertEqual(record.provider_request_id, "video-req")
 
     def test_catalog_exposes_languages_and_video_orientations(self):
         response = self.client.get("/api/products/", **self.auth_headers)
