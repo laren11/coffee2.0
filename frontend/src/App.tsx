@@ -98,6 +98,7 @@ function App() {
   const [loginUsername, setLoginUsername] = useState('coffee')
   const [loginPassword, setLoginPassword] = useState('coffe20')
   const [loginError, setLoginError] = useState('')
+  const [sessionError, setSessionError] = useState('')
 
   const [catalog, setCatalog] = useState<CatalogResponse>(FALLBACK_CATALOG)
   const [loadingCatalog, setLoadingCatalog] = useState(true)
@@ -194,6 +195,7 @@ function App() {
             (current) =>
               current || data.generation_options.videoOrientations[0]?.id || 'portrait',
           )
+          setSessionError('')
           setAuthPhase('ready')
         })
       } catch (error) {
@@ -204,10 +206,17 @@ function App() {
           clearSession()
           return
         }
-        setCatalogError(
-          error instanceof Error ? error.message : 'Unable to load the product catalog.',
+        clearStoredToken()
+        setAuthToken('')
+        setCurrentUsername('')
+        setCatalog(FALLBACK_CATALOG)
+        setCatalogError('')
+        setSessionError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to restore your session. Please sign in again.',
         )
-        setAuthPhase('ready')
+        setAuthPhase('logged_out')
       } finally {
         if (!cancelled) {
           setLoadingCatalog(false)
@@ -323,6 +332,7 @@ function App() {
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setLoginError('')
+    setSessionError('')
     setAuthPhase('logging_in')
 
     try {
@@ -461,6 +471,7 @@ function App() {
             <small>`coffee` / `coffe20`</small>
           </div>
 
+          {sessionError ? <p className="error-banner">{sessionError}</p> : null}
           {loginError ? <p className="error-banner">{loginError}</p> : null}
 
           <button className="submit-button auth-button" type="submit">

@@ -81,6 +81,25 @@ function ensureMePayload(
   throw new ApiError(fallbackMessage, 500)
 }
 
+function ensureCatalogPayload(
+  payload: unknown,
+  fallbackMessage: string,
+): CatalogResponse {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'products' in payload &&
+    Array.isArray(payload.products) &&
+    'generation_options' in payload &&
+    typeof payload.generation_options === 'object' &&
+    payload.generation_options !== null
+  ) {
+    return payload as CatalogResponse
+  }
+
+  throw new ApiError(fallbackMessage, 500)
+}
+
 export function getStoredToken() {
   return window.localStorage.getItem(AUTH_STORAGE_KEY) || ''
 }
@@ -123,7 +142,11 @@ export async function fetchCatalog(token: string): Promise<CatalogResponse> {
   const response = await fetch(`${API_BASE}/products/`, {
     headers: buildAuthHeaders(token),
   })
-  return parseResponse<CatalogResponse>(response)
+  const data = await parseResponse<unknown>(response)
+  return ensureCatalogPayload(
+    data,
+    'The catalog endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
+  )
 }
 
 export async function submitGeneration(
