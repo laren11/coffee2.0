@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py ensure_default_user
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py ensure_default_user && python manage.py ensure_admin_user
     startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
     healthCheckPath: /api/health/
     envVars:
@@ -28,6 +28,10 @@ services:
         value: coffee
       - key: DEFAULT_TEST_PASSWORD
         value: coffe20
+      - key: DJANGO_ADMIN_USERNAME
+        sync: false
+      - key: DJANGO_ADMIN_PASSWORD
+        sync: false
 
   - name: coffee-20-frontend
     type: web

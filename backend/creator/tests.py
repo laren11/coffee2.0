@@ -83,6 +83,34 @@ class ApiTests(TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertIn("job_token", response.json())
 
+    @patch("creator.views.submit_generation")
+    def test_generate_endpoint_accepts_legacy_founder_alias(self, submit_generation_mock):
+        submit_generation_mock.return_value.model_id = "fal-ai/veo3.1/fast"
+        submit_generation_mock.return_value.model_label = "Veo 3.1 Fast Text-to-Video"
+        submit_generation_mock.return_value.request_id = "req-legacy-founder"
+        submit_generation_mock.return_value.content_type = "video"
+        submit_generation_mock.return_value.used_reference_images = False
+        submit_generation_mock.return_value.guidance_note = "Fast pipeline."
+
+        response = self.client.post(
+            "/api/generate/",
+            {
+                "product_id": "coffee-2-0",
+                "content_type": "video",
+                "prompt": "Founder testimonial.",
+                "language": "en",
+                "video_style": "ugc",
+                "video_orientation": "portrait",
+                "ugc_creator_id": "assertive-founder",
+            },
+            **self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            submit_generation_mock.call_args.kwargs["ugc_creator_id"], "founder"
+        )
+
     @patch("creator.views.fetch_generation_status")
     def test_status_endpoint_returns_completed_payload(self, status_mock):
         status_mock.return_value = {

@@ -52,6 +52,23 @@ cd backend
 python manage.py ensure_default_user --username myuser --password mypass
 ```
 
+## Django admin
+
+Admin URL:
+
+- `https://coffee-20-api.onrender.com/admin/`
+
+If you are deploying on Render Free and do not have Shell access, set these backend env vars:
+
+- `DJANGO_ADMIN_USERNAME`
+- `DJANGO_ADMIN_PASSWORD`
+
+Then redeploy the backend. The deploy now runs:
+
+- `python manage.py ensure_admin_user`
+
+so your admin user will be created automatically during build.
+
 ## Where to add product photos
 
 Put product photos here:

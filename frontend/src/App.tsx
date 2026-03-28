@@ -275,7 +275,11 @@ function App() {
   }, [catalog.products, selectedProductId])
 
   useEffect(() => {
-    if (!selectedUgcCreatorId && catalog.generation_options.ugcCreators[0]) {
+    const creatorIds = catalog.generation_options.ugcCreators.map((creator) => creator.id)
+    if (!creatorIds.length) {
+      return
+    }
+    if (!selectedUgcCreatorId || !creatorIds.includes(selectedUgcCreatorId)) {
       setSelectedUgcCreatorId(catalog.generation_options.ugcCreators[0].id)
     }
   }, [catalog.generation_options.ugcCreators, selectedUgcCreatorId])

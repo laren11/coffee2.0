@@ -5,6 +5,11 @@ from .catalog import LANGUAGES, PRODUCTS, UGC_CREATORS, VIDEO_ORIENTATIONS, get_
 
 PRODUCT_IDS = [product["id"] for product in PRODUCTS]
 UGC_CREATOR_IDS = [creator["id"] for creator in UGC_CREATORS]
+UGC_CREATOR_ID_ALIASES = {
+    "assertive-founder": "founder",
+    "high-energy-founder": "founder",
+}
+UGC_CREATOR_CHOICES = list(dict.fromkeys(UGC_CREATOR_IDS + list(UGC_CREATOR_ID_ALIASES)))
 LANGUAGE_IDS = [language["id"] for language in LANGUAGES]
 VIDEO_ORIENTATION_IDS = [orientation["id"] for orientation in VIDEO_ORIENTATIONS]
 VIDEO_ORIENTATION_TO_RATIO = {
@@ -35,7 +40,7 @@ class GenerationRequestSerializer(serializers.Serializer):
         allow_blank=True,
     )
     ugc_creator_id = serializers.ChoiceField(
-        choices=UGC_CREATOR_IDS,
+        choices=UGC_CREATOR_CHOICES,
         required=False,
         allow_blank=True,
     )
@@ -48,6 +53,7 @@ class GenerationRequestSerializer(serializers.Serializer):
         video_style = attrs.get("video_style") or ""
         video_orientation = attrs.get("video_orientation") or ""
         ugc_creator_id = attrs.get("ugc_creator_id") or ""
+        ugc_creator_id = UGC_CREATOR_ID_ALIASES.get(ugc_creator_id, ugc_creator_id)
 
         if content_type == "image":
             aspect_ratio = aspect_ratio or "1:1"
@@ -85,4 +91,5 @@ class GenerationRequestSerializer(serializers.Serializer):
         attrs["language"] = language
         attrs["video_style"] = video_style
         attrs["video_orientation"] = video_orientation
+        attrs["ugc_creator_id"] = ugc_creator_id
         return attrs
