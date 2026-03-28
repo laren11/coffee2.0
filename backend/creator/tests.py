@@ -25,7 +25,7 @@ class PromptingTests(SimpleTestCase):
             video_style="ugc",
             video_orientation="portrait",
             ugc_creator={
-                "name": "Assertive Founder",
+                "name": "Founder",
                 "description": "Confident creator persona.",
                 "persona_prompt": "Speak directly and confidently.",
             },
@@ -35,7 +35,7 @@ class PromptingTests(SimpleTestCase):
 
         self.assertIn("Preserve the exact packaging", prompt)
         self.assertIn("creator-made UGC", prompt)
-        self.assertIn("Assertive Founder", prompt)
+        self.assertIn("Founder", prompt)
         self.assertIn("Slovenian", prompt)
         self.assertIn("clear native Slovenian speech", prompt)
 

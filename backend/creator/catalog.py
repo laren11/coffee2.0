@@ -113,8 +113,8 @@ PRODUCTS = [
 
 UGC_CREATORS = [
     {
-        "id": "assertive-founder",
-        "name": "Assertive Founder",
+        "id": "founder",
+        "name": "Founder",
         "description": (
             "Confident, masculine entrepreneur-style UGC with direct eye contact, "
             "clear speech, and assertive delivery."

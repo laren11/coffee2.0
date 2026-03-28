@@ -8,7 +8,8 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 PRODUCT_ASSETS_ROOT = BASE_DIR / "assets" / "products"
 UGC_CREATOR_ASSETS_ROOT = BASE_DIR / "assets" / "ugc-creators"
 UGC_CREATOR_ASSET_ALIASES = {
-    "assertive-founder": ["assertive-founder", "high-energy-founder"],
+    "founder": ["founder", "assertive-founder", "high-energy-founder"],
+    "assertive-founder": ["founder", "assertive-founder", "high-energy-founder"],
 }
 
 

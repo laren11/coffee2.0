@@ -22,8 +22,8 @@ from creator.prompting import (
 
 TEXT_IMAGE_MODEL = "fal-ai/nano-banana-pro"
 REFERENCE_IMAGE_MODEL = "fal-ai/nano-banana-pro/edit"
-TEXT_VIDEO_MODEL = "fal-ai/veo3.1"
-IMAGE_TO_VIDEO_MODEL = "fal-ai/veo3.1/image-to-video"
+TEXT_VIDEO_MODEL = "fal-ai/veo3.1/fast"
+IMAGE_TO_VIDEO_MODEL = "fal-ai/veo3.1/fast/image-to-video"
 REFERENCE_VIDEO_MODEL = "fal-ai/veo3.1/reference-to-video"
 MAX_REFERENCE_IMAGES = 6
 MAX_REFERENCE_IMAGE_SIZE_BYTES = 8 * 1024 * 1024
@@ -45,6 +45,14 @@ class SubmissionResult:
     content_type: str
     used_reference_images: bool
     guidance_note: str
+
+
+@dataclass
+class ReferenceAssets:
+    combined: list[str]
+    uploaded: list[str]
+    product: list[str]
+    creator: list[str]
 
 
 def _ensure_fal_key() -> None:
@@ -95,12 +103,12 @@ def _serialize_logs(logs: list[Any]) -> list[dict[str, Any]]:
     return serialized
 
 
-def _collect_reference_data_uris(
+def _collect_reference_assets(
     *,
     product_id: str,
     ugc_creator_id: str,
     reference_images: list,
-) -> list[str]:
+) -> ReferenceAssets:
     uploaded_reference_uris = [
         _file_to_data_uri(upload) for upload in reference_images[:MAX_REFERENCE_IMAGES]
     ]
@@ -112,9 +120,16 @@ def _collect_reference_data_uris(
         if ugc_creator_id
         else []
     )
-    return (
-        uploaded_reference_uris + local_product_reference_uris + local_creator_reference_uris
-    )[:MAX_REFERENCE_IMAGES]
+    return ReferenceAssets(
+        combined=(
+            uploaded_reference_uris
+            + local_product_reference_uris
+            + local_creator_reference_uris
+        )[:MAX_REFERENCE_IMAGES],
+        uploaded=uploaded_reference_uris,
+        product=local_product_reference_uris,
+        creator=local_creator_reference_uris,
+    )
 
 
 def _select_model(
@@ -128,23 +143,29 @@ def _select_model(
             return REFERENCE_IMAGE_MODEL, "Nano Banana Pro Edit"
         return TEXT_IMAGE_MODEL, "Nano Banana Pro"
 
-    if video_style == "ad" and reference_count:
-        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Image-to-Video"
-    if reference_count >= 2:
-        return REFERENCE_VIDEO_MODEL, "Veo 3.1 Reference-to-Video"
-    if reference_count == 1:
-        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Image-to-Video"
-    return TEXT_VIDEO_MODEL, "Veo 3.1 Text-to-Video"
+    if reference_count:
+        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
+    return TEXT_VIDEO_MODEL, "Veo 3.1 Fast Text-to-Video"
 
 
 def _model_label_for_id(model_id: str) -> str:
     return {
         TEXT_IMAGE_MODEL: "Nano Banana Pro",
         REFERENCE_IMAGE_MODEL: "Nano Banana Pro Edit",
-        TEXT_VIDEO_MODEL: "Veo 3.1 Text-to-Video",
-        IMAGE_TO_VIDEO_MODEL: "Veo 3.1 Image-to-Video",
+        TEXT_VIDEO_MODEL: "Veo 3.1 Fast Text-to-Video",
+        IMAGE_TO_VIDEO_MODEL: "Veo 3.1 Fast Image-to-Video",
         REFERENCE_VIDEO_MODEL: "Veo 3.1 Reference-to-Video",
     }[model_id]
+
+
+def _choose_ugc_anchor_image_url(reference_assets: ReferenceAssets) -> str:
+    if reference_assets.uploaded:
+        return reference_assets.uploaded[0]
+    if reference_assets.creator:
+        return reference_assets.creator[0]
+    if reference_assets.product:
+        return reference_assets.product[0]
+    return ""
 
 
 def _generate_cinematic_keyframe_url(
@@ -205,11 +226,12 @@ def _build_arguments(
 ) -> tuple[str, dict[str, Any], bool, bool]:
     product = PRODUCTS_BY_ID[product_id]
     ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
-    reference_data_uris = _collect_reference_data_uris(
+    reference_assets = _collect_reference_assets(
         product_id=product_id,
         ugc_creator_id=ugc_creator_id,
         reference_images=reference_images,
     )
+    reference_data_uris = reference_assets.combined
     model_id, _ = _select_model(
         content_type=content_type,
         reference_count=len(reference_data_uris),
@@ -247,9 +269,10 @@ def _build_arguments(
         "prompt": full_prompt,
         "aspect_ratio": aspect_ratio,
         "duration": "8s",
-        "resolution": "1080p",
+        "resolution": "720p",
         "generate_audio": include_audio,
         "negative_prompt": build_negative_prompt(video_style),
+        "auto_fix": True,
     }
 
     if model_id == TEXT_VIDEO_MODEL:
@@ -266,6 +289,8 @@ def _build_arguments(
                 reference_data_uris=reference_data_uris,
             )
             used_cinematic_opening_keyframe = True
+        elif content_type == "video" and video_style == "ugc":
+            image_url = _choose_ugc_anchor_image_url(reference_assets)
         arguments["image_url"] = image_url
         return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
 
@@ -309,6 +334,10 @@ def submit_generation(
         raise FalSubmissionError(str(exc)) from exc
 
     guidance_chunks = []
+    if content_type == "video":
+        guidance_chunks.append(
+            "Video generation now uses the faster Veo 3.1 Fast pipeline for quicker turnaround."
+        )
     if used_reference_images:
         guidance_chunks.append(
             "Reference photos were used to keep the product and creator closer to the real packaging and look."

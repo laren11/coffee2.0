@@ -23,11 +23,11 @@ The app automatically chooses the model based on the job type:
 
 - Image without references: `fal-ai/nano-banana-pro`
 - Image with references: `fal-ai/nano-banana-pro/edit`
-- Video without references: `fal-ai/veo3.1`
-- UGC video with 2+ reference images: `fal-ai/veo3.1/reference-to-video`
-- Ad video with references: `fal-ai/veo3.1/image-to-video` after a generated cinematic opening frame
+- Video without references: `fal-ai/veo3.1/fast`
+- Video with references: `fal-ai/veo3.1/fast/image-to-video`
+- Ad video with references still gets a generated cinematic opening frame first so it does not start on a flat packshot
 
-This is a good MVP balance between quality, cost, and brand control.
+This is a better MVP balance when you want faster turnaround while still keeping stronger prompt control.
 
 ## Login
 
@@ -67,9 +67,14 @@ The app auto-loads those images during generation.
 
 Put rights-cleared creator photos here:
 
-- `backend/assets/ugc-creators/assertive-founder/`
+- `backend/assets/ugc-creators/founder/`
 - `backend/assets/ugc-creators/wellness-mentor/`
 - `backend/assets/ugc-creators/performance-creator/`
+
+Legacy compatibility:
+
+- `backend/assets/ugc-creators/assertive-founder/` still works as an alias for `founder/`
+- `backend/assets/ugc-creators/high-energy-founder/` still works as an alias for `assertive-founder/`
 
 Important:
 
