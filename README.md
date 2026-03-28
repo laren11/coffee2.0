@@ -110,6 +110,7 @@ This repo now includes `render.yaml`, which creates:
 
 - `coffee-20-api` as a free Python web service
 - `coffee-20-frontend` as a free static site
+- `coffee-20-db` as a free Render Postgres database
 
 ### What you need to do in Render
 
