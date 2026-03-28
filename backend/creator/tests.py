@@ -6,7 +6,13 @@ from rest_framework.authtoken.models import Token
 
 from creator.models import GenerationRecord
 from creator.prompting import build_generation_prompt, build_video_starter_frame_prompt
-from creator.services.fal_service import IMAGE_TO_VIDEO_MODEL, _build_arguments
+from creator.services.fal_service import (
+    IMAGE_TO_VIDEO_MODEL,
+    FalSubmissionError,
+    ReferenceAssets,
+    _build_arguments,
+    _generate_video_starter_frame_url,
+)
 
 
 class PromptingTests(SimpleTestCase):
@@ -94,6 +100,45 @@ class FalServiceTests(SimpleTestCase):
         self.assertIsInstance(has_reference_images, bool)
         self.assertTrue(used_generated_starter_frame)
         starter_frame_mock.assert_called_once()
+
+    @patch("creator.services.fal_service._request_video_starter_frame")
+    def test_video_starter_frame_falls_back_without_creator_refs(
+        self, starter_frame_request_mock
+    ):
+        starter_frame_request_mock.side_effect = [
+            FalSubmissionError("Creator reference rejected."),
+            "https://example.com/fallback-frame.webp",
+        ]
+
+        starter_frame_url = _generate_video_starter_frame_url(
+            product_id="coffee-2-0",
+            prompt="Confident founder testimonial in a premium office.",
+            language="en",
+            video_style="ugc",
+            video_orientation="portrait",
+            ugc_creator_id="founder",
+            include_audio=True,
+            reference_assets=ReferenceAssets(
+                combined=[
+                    "data:image/png;base64,product",
+                    "data:image/png;base64,creator",
+                ],
+                uploaded=[],
+                product=["data:image/png;base64,product"],
+                creator=["data:image/png;base64,creator"],
+            ),
+        )
+
+        self.assertEqual(starter_frame_url, "https://example.com/fallback-frame.webp")
+        self.assertEqual(starter_frame_request_mock.call_count, 2)
+        self.assertEqual(
+            starter_frame_request_mock.call_args_list[0].kwargs["reference_uris"],
+            ["data:image/png;base64,creator", "data:image/png;base64,product"],
+        )
+        self.assertEqual(
+            starter_frame_request_mock.call_args_list[1].kwargs["reference_uris"],
+            ["data:image/png;base64,product"],
+        )
 
 
 class ApiTests(TestCase):

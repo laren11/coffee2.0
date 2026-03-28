@@ -171,6 +171,60 @@ def _starter_frame_reference_uris(
     return ordered[:MAX_REFERENCE_IMAGES]
 
 
+def _extract_first_image_url(result: Any) -> str:
+    images: Any = []
+    if isinstance(result, dict):
+        images = result.get("images", [])
+    else:
+        images = getattr(result, "images", None)
+        if images is None:
+            data = getattr(result, "data", None)
+            if isinstance(data, dict):
+                images = data.get("images", [])
+            else:
+                images = getattr(data, "images", [])
+    if not images:
+        return ""
+
+    first_image = images[0]
+    if isinstance(first_image, dict):
+        return first_image.get("url", "") or ""
+    return getattr(first_image, "url", "") or ""
+
+
+def _request_video_starter_frame(
+    *,
+    prompt_text: str,
+    video_orientation: str,
+    reference_uris: list[str],
+) -> str:
+    arguments: dict[str, Any] = {
+        "prompt": prompt_text,
+        "aspect_ratio": "16:9" if video_orientation == "landscape" else "9:16",
+        "resolution": "2K",
+        "num_images": 1,
+    }
+    model_id = TEXT_IMAGE_MODEL
+    if reference_uris:
+        model_id = REFERENCE_IMAGE_MODEL
+        arguments["image_urls"] = reference_uris
+        arguments["limit_generations"] = True
+
+    try:
+        result = fal_client.subscribe(model_id, arguments)
+    except Exception as exc:  # pragma: no cover - network/provider failure
+        raise FalSubmissionError(
+            "Unable to prepare the opening frame for the video."
+        ) from exc
+
+    image_url = _extract_first_image_url(result)
+    if not image_url:
+        raise FalSubmissionError(
+            "fal.ai did not return a usable starter frame for the video."
+        )
+    return image_url
+
+
 def _generate_video_starter_frame_url(
     *,
     product_id: str,
@@ -184,7 +238,7 @@ def _generate_video_starter_frame_url(
 ) -> str:
     product = PRODUCTS_BY_ID[product_id]
     ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
-    starter_frame_reference_uris = _starter_frame_reference_uris(
+    primary_reference_uris = _starter_frame_reference_uris(
         video_style=video_style,
         reference_assets=reference_assets,
     )
@@ -195,34 +249,33 @@ def _generate_video_starter_frame_url(
         video_style=video_style,
         video_orientation=video_orientation,
         ugc_creator=ugc_creator,
-        has_reference_images=bool(starter_frame_reference_uris),
+        has_reference_images=bool(primary_reference_uris),
         include_audio=include_audio,
     )
-    arguments: dict[str, Any] = {
-        "prompt": prompt_text,
-        "aspect_ratio": "16:9" if video_orientation == "landscape" else "9:16",
-        "resolution": "2K",
-        "num_images": 1,
-    }
-    model_id = TEXT_IMAGE_MODEL
-    if starter_frame_reference_uris:
-        model_id = REFERENCE_IMAGE_MODEL
-        arguments["image_urls"] = starter_frame_reference_uris
-        arguments["limit_generations"] = True
+    attempt_reference_sets = [primary_reference_uris]
+    if reference_assets.product:
+        attempt_reference_sets.append(reference_assets.product[:MAX_REFERENCE_IMAGES])
+    attempt_reference_sets.append([])
 
-    try:
-        result = fal_client.subscribe(model_id, arguments)
-    except Exception as exc:  # pragma: no cover - network/provider failure
-        raise FalSubmissionError(
-            "Unable to prepare the opening frame for the video."
-        ) from exc
+    seen_reference_sets: set[tuple[str, ...]] = set()
+    last_error: FalSubmissionError | None = None
+    for reference_uris in attempt_reference_sets:
+        reference_key = tuple(reference_uris)
+        if reference_key in seen_reference_sets:
+            continue
+        seen_reference_sets.add(reference_key)
+        try:
+            return _request_video_starter_frame(
+                prompt_text=prompt_text,
+                video_orientation=video_orientation,
+                reference_uris=reference_uris,
+            )
+        except FalSubmissionError as exc:
+            last_error = exc
 
-    images = result.get("images", [])
-    if not images or not images[0].get("url"):
-        raise FalSubmissionError(
-            "fal.ai did not return a usable starter frame for the video."
-        )
-    return images[0]["url"]
+    if last_error:
+        raise last_error
+    raise FalSubmissionError("Unable to prepare the opening frame for the video.")
 
 
 def _build_arguments(
@@ -318,20 +371,27 @@ def submit_generation(
     reference_images: list,
 ) -> SubmissionResult:
     _ensure_fal_key()
-    model_id, arguments, used_reference_images, used_generated_starter_frame = (
-        _build_arguments(
-            product_id=product_id,
-            content_type=content_type,
-            prompt=prompt,
-            language=language,
-            aspect_ratio=aspect_ratio,
-            video_style=video_style,
-            video_orientation=video_orientation,
-            ugc_creator_id=ugc_creator_id,
-            include_audio=include_audio,
-            reference_images=reference_images,
+    try:
+        model_id, arguments, used_reference_images, used_generated_starter_frame = (
+            _build_arguments(
+                product_id=product_id,
+                content_type=content_type,
+                prompt=prompt,
+                language=language,
+                aspect_ratio=aspect_ratio,
+                video_style=video_style,
+                video_orientation=video_orientation,
+                ugc_creator_id=ugc_creator_id,
+                include_audio=include_audio,
+                reference_images=reference_images,
+            )
         )
-    )
+    except FalSubmissionError:
+        raise
+    except Exception as exc:
+        raise FalSubmissionError(
+            "Unable to prepare the generation request. Try shortening the prompt or removing the creator reference photo and try again."
+        ) from exc
     model_label = _model_label_for_id(model_id)
 
     try:
