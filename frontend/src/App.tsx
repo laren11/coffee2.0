@@ -229,7 +229,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [authToken, clearSession])
+  }, [authToken])
 
   useEffect(() => {
     if (!selectedProductId && catalog.products[0]) {
@@ -327,7 +327,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [activeJob, phase, pollJob])
+  }, [activeJob, phase])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
