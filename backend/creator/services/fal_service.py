@@ -11,18 +11,19 @@ from typing import Any
 import fal_client
 from fal_client.client import Completed, InProgress, Queued
 
-from creator.assets import (
-    list_product_reference_files,
-    list_ugc_creator_reference_files,
-)
+from creator.assets import list_product_reference_files, list_ugc_creator_reference_files
 from creator.catalog import PRODUCTS_BY_ID, UGC_CREATORS_BY_ID
-from creator.prompting import build_generation_prompt, build_negative_prompt
+from creator.prompting import (
+    build_cinematic_keyframe_prompt,
+    build_generation_prompt,
+    build_negative_prompt,
+)
 
 
-TEXT_IMAGE_MODEL = "fal-ai/nano-banana"
+TEXT_IMAGE_MODEL = "fal-ai/nano-banana-pro"
 REFERENCE_IMAGE_MODEL = "fal-ai/nano-banana-pro/edit"
-TEXT_VIDEO_MODEL = "fal-ai/veo3.1/fast"
-IMAGE_TO_VIDEO_MODEL = "fal-ai/veo3.1/fast/image-to-video"
+TEXT_VIDEO_MODEL = "fal-ai/veo3.1"
+IMAGE_TO_VIDEO_MODEL = "fal-ai/veo3.1/image-to-video"
 REFERENCE_VIDEO_MODEL = "fal-ai/veo3.1/reference-to-video"
 MAX_REFERENCE_IMAGES = 6
 MAX_REFERENCE_IMAGE_SIZE_BYTES = 8 * 1024 * 1024
@@ -94,27 +95,99 @@ def _serialize_logs(logs: list[Any]) -> list[dict[str, Any]]:
     return serialized
 
 
-def _select_model(content_type: str, reference_count: int) -> tuple[str, str]:
+def _collect_reference_data_uris(
+    *,
+    product_id: str,
+    ugc_creator_id: str,
+    reference_images: list,
+) -> list[str]:
+    uploaded_reference_uris = [
+        _file_to_data_uri(upload) for upload in reference_images[:MAX_REFERENCE_IMAGES]
+    ]
+    local_product_reference_uris = [
+        _path_to_data_uri(path) for path in list_product_reference_files(product_id)
+    ]
+    local_creator_reference_uris = (
+        [_path_to_data_uri(path) for path in list_ugc_creator_reference_files(ugc_creator_id)]
+        if ugc_creator_id
+        else []
+    )
+    return (
+        uploaded_reference_uris + local_product_reference_uris + local_creator_reference_uris
+    )[:MAX_REFERENCE_IMAGES]
+
+
+def _select_model(
+    *,
+    content_type: str,
+    reference_count: int,
+    video_style: str,
+) -> tuple[str, str]:
     if content_type == "image":
         if reference_count:
             return REFERENCE_IMAGE_MODEL, "Nano Banana Pro Edit"
-        return TEXT_IMAGE_MODEL, "Nano Banana"
+        return TEXT_IMAGE_MODEL, "Nano Banana Pro"
 
+    if video_style == "ad" and reference_count:
+        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Image-to-Video"
     if reference_count >= 2:
         return REFERENCE_VIDEO_MODEL, "Veo 3.1 Reference-to-Video"
     if reference_count == 1:
-        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
-    return TEXT_VIDEO_MODEL, "Veo 3.1 Fast Text-to-Video"
+        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Image-to-Video"
+    return TEXT_VIDEO_MODEL, "Veo 3.1 Text-to-Video"
 
 
 def _model_label_for_id(model_id: str) -> str:
     return {
-        TEXT_IMAGE_MODEL: "Nano Banana",
+        TEXT_IMAGE_MODEL: "Nano Banana Pro",
         REFERENCE_IMAGE_MODEL: "Nano Banana Pro Edit",
-        TEXT_VIDEO_MODEL: "Veo 3.1 Fast Text-to-Video",
-        IMAGE_TO_VIDEO_MODEL: "Veo 3.1 Fast Image-to-Video",
+        TEXT_VIDEO_MODEL: "Veo 3.1 Text-to-Video",
+        IMAGE_TO_VIDEO_MODEL: "Veo 3.1 Image-to-Video",
         REFERENCE_VIDEO_MODEL: "Veo 3.1 Reference-to-Video",
     }[model_id]
+
+
+def _generate_cinematic_keyframe_url(
+    *,
+    product_id: str,
+    prompt: str,
+    language: str,
+    video_orientation: str,
+    reference_data_uris: list[str],
+) -> str:
+    product = PRODUCTS_BY_ID[product_id]
+    prompt_text = build_cinematic_keyframe_prompt(
+        product=product,
+        user_prompt=prompt,
+        language=language,
+        video_orientation=video_orientation,
+        has_reference_images=bool(reference_data_uris),
+    )
+    arguments: dict[str, Any] = {
+        "prompt": prompt_text,
+        "aspect_ratio": "16:9" if video_orientation == "landscape" else "9:16",
+        "resolution": "2K",
+        "num_images": 1,
+    }
+    model_id = TEXT_IMAGE_MODEL
+    if reference_data_uris:
+        model_id = REFERENCE_IMAGE_MODEL
+        arguments["image_urls"] = reference_data_uris
+        arguments["limit_generations"] = True
+
+    try:
+        result = fal_client.subscribe(model_id, arguments)
+    except Exception as exc:  # pragma: no cover - network/provider failure
+        raise FalSubmissionError(
+            "Unable to prepare the cinematic opening frame for the ad video."
+        ) from exc
+
+    images = result.get("images", [])
+    if not images or not images[0].get("url"):
+        raise FalSubmissionError(
+            "fal.ai did not return a usable cinematic opening frame for the ad video."
+        )
+    return images[0]["url"]
 
 
 def _build_arguments(
@@ -129,28 +202,21 @@ def _build_arguments(
     ugc_creator_id: str,
     include_audio: bool,
     reference_images: list,
-) -> tuple[str, dict[str, Any], bool]:
+) -> tuple[str, dict[str, Any], bool, bool]:
     product = PRODUCTS_BY_ID[product_id]
     ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
-    uploaded_reference_uris = [
-        _file_to_data_uri(upload) for upload in reference_images[:MAX_REFERENCE_IMAGES]
-    ]
-    local_product_reference_uris = [
-        _path_to_data_uri(path)
-        for path in list_product_reference_files(product_id)
-    ]
-    local_creator_reference_uris = (
-        [_path_to_data_uri(path) for path in list_ugc_creator_reference_files(ugc_creator_id)]
-        if ugc_creator_id
-        else []
+    reference_data_uris = _collect_reference_data_uris(
+        product_id=product_id,
+        ugc_creator_id=ugc_creator_id,
+        reference_images=reference_images,
     )
-    reference_data_uris = (
-        uploaded_reference_uris
-        + local_product_reference_uris
-        + local_creator_reference_uris
-    )[:MAX_REFERENCE_IMAGES]
-    model_id, _ = _select_model(content_type, len(reference_data_uris))
+    model_id, _ = _select_model(
+        content_type=content_type,
+        reference_count=len(reference_data_uris),
+        video_style=video_style or "ad",
+    )
     has_reference_images = bool(reference_data_uris)
+    used_cinematic_opening_keyframe = False
 
     full_prompt = build_generation_prompt(
         product=product,
@@ -161,37 +227,50 @@ def _build_arguments(
         video_orientation=video_orientation,
         ugc_creator=ugc_creator,
         has_reference_images=has_reference_images,
+        include_audio=include_audio,
     )
 
     if content_type == "image":
         arguments: dict[str, Any] = {
             "prompt": full_prompt,
             "aspect_ratio": aspect_ratio,
-            "resolution": "1K",
+            "resolution": "2K",
+            "num_images": 1,
+            "output_format": "webp",
         }
         if has_reference_images:
             arguments["image_urls"] = reference_data_uris
             arguments["limit_generations"] = True
-        return model_id, arguments, has_reference_images
+        return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
 
     arguments = {
         "prompt": full_prompt,
         "aspect_ratio": aspect_ratio,
         "duration": "8s",
-        "resolution": "720p",
+        "resolution": "1080p",
         "generate_audio": include_audio,
-        "auto_fix": True,
+        "negative_prompt": build_negative_prompt(video_style),
     }
 
     if model_id == TEXT_VIDEO_MODEL:
-        arguments["negative_prompt"] = build_negative_prompt(video_style)
-    elif model_id == IMAGE_TO_VIDEO_MODEL:
-        arguments["negative_prompt"] = build_negative_prompt(video_style)
-        arguments["image_url"] = reference_data_uris[0]
-    elif model_id == REFERENCE_VIDEO_MODEL:
-        arguments["image_urls"] = reference_data_uris
+        return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
 
-    return model_id, arguments, has_reference_images
+    if model_id == IMAGE_TO_VIDEO_MODEL:
+        image_url = reference_data_uris[0] if reference_data_uris else ""
+        if content_type == "video" and video_style == "ad":
+            image_url = _generate_cinematic_keyframe_url(
+                product_id=product_id,
+                prompt=prompt,
+                language=language,
+                video_orientation=video_orientation or "portrait",
+                reference_data_uris=reference_data_uris,
+            )
+            used_cinematic_opening_keyframe = True
+        arguments["image_url"] = image_url
+        return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
+
+    arguments["image_urls"] = reference_data_uris
+    return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
 
 
 def submit_generation(
@@ -208,17 +287,19 @@ def submit_generation(
     reference_images: list,
 ) -> SubmissionResult:
     _ensure_fal_key()
-    model_id, arguments, used_reference_images = _build_arguments(
-        product_id=product_id,
-        content_type=content_type,
-        prompt=prompt,
-        language=language,
-        aspect_ratio=aspect_ratio,
-        video_style=video_style,
-        video_orientation=video_orientation,
-        ugc_creator_id=ugc_creator_id,
-        include_audio=include_audio,
-        reference_images=reference_images,
+    model_id, arguments, used_reference_images, used_cinematic_opening_keyframe = (
+        _build_arguments(
+            product_id=product_id,
+            content_type=content_type,
+            prompt=prompt,
+            language=language,
+            aspect_ratio=aspect_ratio,
+            video_style=video_style,
+            video_orientation=video_orientation,
+            ugc_creator_id=ugc_creator_id,
+            include_audio=include_audio,
+            reference_images=reference_images,
+        )
     )
     model_label = _model_label_for_id(model_id)
 
@@ -227,18 +308,31 @@ def submit_generation(
     except Exception as exc:  # pragma: no cover - network/provider failure
         raise FalSubmissionError(str(exc)) from exc
 
-    guidance_note = (
-        "Reference photos were used to keep the product closer to the real packaging."
-        if used_reference_images
-        else "No reference photos were uploaded, so the result may drift from the exact real-world packaging."
-    )
+    guidance_chunks = []
+    if used_reference_images:
+        guidance_chunks.append(
+            "Reference photos were used to keep the product and creator closer to the real packaging and look."
+        )
+    else:
+        guidance_chunks.append(
+            "No reference photos were available, so the result may drift from the exact real-world packaging."
+        )
+    if used_cinematic_opening_keyframe:
+        guidance_chunks.append(
+            "This ad video uses a generated cinematic opening frame, so it should not start on the flat raw packshot."
+        )
+    if content_type == "video" and include_audio:
+        guidance_chunks.append(
+            "Audio generation is enabled, but the cleanest ad voiceovers still usually come from a separate dedicated voice tool."
+        )
+
     return SubmissionResult(
         model_id=model_id,
         model_label=model_label,
         request_id=handle.request_id,
         content_type=content_type,
         used_reference_images=used_reference_images,
-        guidance_note=guidance_note,
+        guidance_note=" ".join(guidance_chunks),
     )
 
 

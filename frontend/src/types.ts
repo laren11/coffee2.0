@@ -81,6 +81,33 @@ export type GeneratedAsset = {
   content_type?: string
 }
 
+export type GenerationHistoryItem = {
+  id: number
+  job_token: string
+  model_id: string
+  model_label: string
+  product_id: string
+  product_name: string
+  content_type: 'image' | 'video'
+  language: LanguageOption['id']
+  video_style: '' | 'ugc' | 'ad'
+  video_orientation: '' | VideoOrientation['id']
+  aspect_ratio: string
+  prompt: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  used_reference_images: boolean
+  guidance_note: string
+  error_message: string
+  result_description: string
+  assets: GeneratedAsset[]
+  created_at: string
+  updated_at: string
+}
+
+export type GenerationHistoryResponse = {
+  items: GenerationHistoryItem[]
+}
+
 export type GenerationStatusResponse = {
   state: 'queued' | 'processing' | 'completed' | 'failed'
   queue_position?: number

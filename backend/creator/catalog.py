@@ -113,15 +113,16 @@ PRODUCTS = [
 
 UGC_CREATORS = [
     {
-        "id": "high-energy-founder",
-        "name": "High-Energy Founder",
+        "id": "assertive-founder",
+        "name": "Assertive Founder",
         "description": (
             "Confident, masculine entrepreneur-style UGC with direct eye contact, "
             "clear speech, and assertive delivery."
         ),
         "persona_prompt": (
             "The speaker should feel like a sharp, high-agency founder talking directly "
-            "to camera in a confident but believable way."
+            "to camera in a confident but believable way, without imitating any specific "
+            "real public figure."
         ),
     },
     {

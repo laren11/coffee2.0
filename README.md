@@ -21,11 +21,11 @@ A React + Django MVP for generating Coffee 2.0 branded image ads, ad videos, and
 
 The app automatically chooses the model based on the job type:
 
-- Image without references: `fal-ai/nano-banana`
+- Image without references: `fal-ai/nano-banana-pro`
 - Image with references: `fal-ai/nano-banana-pro/edit`
-- Video without references: `fal-ai/veo3.1/fast`
-- Video with 1 reference image: `fal-ai/veo3.1/fast/image-to-video`
-- Video with 2+ reference images: `fal-ai/veo3.1/reference-to-video`
+- Video without references: `fal-ai/veo3.1`
+- UGC video with 2+ reference images: `fal-ai/veo3.1/reference-to-video`
+- Ad video with references: `fal-ai/veo3.1/image-to-video` after a generated cinematic opening frame
 
 This is a good MVP balance between quality, cost, and brand control.
 
@@ -67,7 +67,7 @@ The app auto-loads those images during generation.
 
 Put rights-cleared creator photos here:
 
-- `backend/assets/ugc-creators/high-energy-founder/`
+- `backend/assets/ugc-creators/assertive-founder/`
 - `backend/assets/ugc-creators/wellness-mentor/`
 - `backend/assets/ugc-creators/performance-creator/`
 
@@ -142,7 +142,7 @@ Then set:
 - `VITE_API_BASE_URL=https://coffee-20-api.onrender.com/api`
 - `DEFAULT_TEST_PASSWORD=coffe20`
 
-The backend `preDeployCommand` already runs:
+The backend build step already runs:
 
 - `python manage.py migrate`
 - `python manage.py ensure_default_user`

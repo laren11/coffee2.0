@@ -12,6 +12,7 @@ import {
   clearStoredToken,
   fetchCatalog,
   fetchGenerationStatus,
+  fetchHistory,
   fetchMe,
   getStoredToken,
   login,
@@ -22,6 +23,7 @@ import './App.css'
 import type {
   CatalogResponse,
   GeneratedAsset,
+  GenerationHistoryItem,
   GenerationStatusResponse,
   LanguageOption,
   Product,
@@ -103,6 +105,8 @@ function App() {
   const [catalog, setCatalog] = useState<CatalogResponse>(FALLBACK_CATALOG)
   const [loadingCatalog, setLoadingCatalog] = useState(true)
   const [catalogError, setCatalogError] = useState('')
+  const [historyItems, setHistoryItems] = useState<GenerationHistoryItem[]>([])
+  const [historyError, setHistoryError] = useState('')
   const [selectedProductId, setSelectedProductId] = useState('')
   const [contentType, setContentType] = useState<ContentType>('image')
   const [selectedLanguage, setSelectedLanguage] = useState<LanguageOption['id']>('en')
@@ -112,9 +116,9 @@ function App() {
   )
   const [selectedUgcCreatorId, setSelectedUgcCreatorId] = useState('')
   const [imageAspectRatio, setImageAspectRatio] = useState('1:1')
-  const [includeAudio, setIncludeAudio] = useState(false)
+  const [includeAudio, setIncludeAudio] = useState(true)
   const [prompt, setPrompt] = useState(
-    'Create a premium social ad focused on the product benefits, product shots, and a strong opening hook.',
+    'Create a premium high-converting ad with a strong opening hook, realistic product interaction, persuasive benefit moments, and a clean final CTA-ready ending.',
   )
   const [referenceImages, setReferenceImages] = useState<File[]>([])
   const [phase, setPhase] = useState<GenerationPhase>('idle')
@@ -157,8 +161,34 @@ function App() {
     setCurrentUsername('')
     setAuthPhase('logged_out')
     setCatalog(FALLBACK_CATALOG)
+    setHistoryItems([])
+    setHistoryError('')
     setLoadingCatalog(false)
     resetGenerationState()
+  })
+
+  const refreshHistory = useEffectEvent(async () => {
+    if (!authToken) {
+      return
+    }
+
+    try {
+      const data = await fetchHistory(authToken)
+      startTransition(() => {
+        setHistoryItems(data.items)
+        setHistoryError('')
+      })
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        clearSession()
+        return
+      }
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load your generation history.',
+      )
+    }
   })
 
   useEffect(() => {
@@ -174,9 +204,14 @@ function App() {
       setAuthPhase('checking')
       setLoadingCatalog(true)
       setCatalogError('')
+      setHistoryError('')
 
       try {
-        const [user, data] = await Promise.all([fetchMe(authToken), fetchCatalog(authToken)])
+        const [user, data, history] = await Promise.all([
+          fetchMe(authToken),
+          fetchCatalog(authToken),
+          fetchHistory(authToken),
+        ])
         if (cancelled) {
           return
         }
@@ -195,6 +230,7 @@ function App() {
             (current) =>
               current || data.generation_options.videoOrientations[0]?.id || 'portrait',
           )
+          setHistoryItems(history.items)
           setSessionError('')
           setAuthPhase('ready')
         })
@@ -210,6 +246,7 @@ function App() {
         setAuthToken('')
         setCurrentUsername('')
         setCatalog(FALLBACK_CATALOG)
+        setHistoryItems([])
         setCatalogError('')
         setSessionError(
           error instanceof Error
@@ -276,6 +313,8 @@ function App() {
           ?.map((log) => log.message)
           .filter((message): message is string => Boolean(message))
           .slice(-4) || []
+      const shouldRefreshHistory =
+        status.state === 'completed' || status.state === 'failed'
 
       startTransition(() => {
         setStatusLogs(nextLogs)
@@ -302,6 +341,9 @@ function App() {
           setResultDescription(status.description || '')
         }
       })
+      if (shouldRefreshHistory) {
+        void refreshHistory()
+      }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         clearSession()
@@ -390,6 +432,7 @@ function App() {
         })
         setPhase('queued')
       })
+      void refreshHistory()
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         clearSession()
@@ -411,6 +454,12 @@ function App() {
     clearSession()
   }
 
+  const formatHistoryTimestamp = (value: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(value))
+
   const promptSummary = deferredPrompt.trim()
     ? deferredPrompt.trim()
     : 'Your creative brief will appear here once you start typing.'
@@ -424,6 +473,10 @@ function App() {
     !isWorking
   const primaryAsset = generatedAssets[0]
   const productPalette = selectedProduct?.palette || ['#B97A5B', '#F5E6D6', '#6D4A38']
+  const previewAspectRatio =
+    contentType === 'video'
+      ? selectedVideoOrientation?.aspect_ratio || '9:16'
+      : imageAspectRatio
 
   if (authPhase === 'checking') {
     return (
@@ -559,6 +612,10 @@ function App() {
               <p className="asset-note">
                 Product photo folder: <code>{selectedProduct.asset_folder}</code>
               </p>
+              <p className="asset-note">
+                Best results usually come from 3 to 6 product photos: front packshot, 45
+                degree angle, close label detail, in-hand shot, and one lifestyle scene.
+              </p>
             </div>
           ) : null}
         </section>
@@ -659,9 +716,16 @@ function App() {
                   ))}
                 </div>
                 {selectedUgcCreator ? (
-                  <p className="asset-note">
-                    Creator photo folder: <code>{selectedUgcCreator.asset_folder}</code>
-                  </p>
+                  <>
+                    <p className="asset-note">
+                      Creator photo folder: <code>{selectedUgcCreator.asset_folder}</code>
+                    </p>
+                    <p className="asset-note">
+                      Upload 4 to 8 rights-cleared creator photos if you want a consistent
+                      face. Without them, the preset only controls tone, energy, and
+                      delivery.
+                    </p>
+                  </>
                 ) : null}
               </div>
             ) : null}
@@ -692,9 +756,11 @@ function App() {
                   onChange={(event) => setIncludeAudio(event.target.checked)}
                 />
                 <span>
-                  <strong>Generate AI audio</strong>
+                  <strong>Generate native video audio</strong>
                   <small>
-                    Useful for experimental UGC runs, but slower and less predictable.
+                    Best for spoken UGC and language testing. For the cleanest final ad
+                    voiceovers, you may still want to replace it later with a dedicated
+                    voice tool.
                   </small>
                 </span>
               </label>
@@ -713,7 +779,8 @@ function App() {
               />
               <p className="helper-text">
                 Your custom prompt is treated as a top-priority instruction in the final
-                generation prompt.
+                generation prompt. Mention hook, setting, camera feel, spoken line, CTA,
+                and any shots you want to avoid.
               </p>
             </div>
 
@@ -809,21 +876,40 @@ function App() {
           <div className="result-card">
             {primaryAsset ? (
               activeJob?.contentType === 'video' ? (
-                <video controls src={primaryAsset.url} className="result-media" />
+                <div
+                  className="result-stage"
+                  data-aspect-ratio={previewAspectRatio}
+                >
+                  <video controls src={primaryAsset.url} className="result-media" />
+                </div>
               ) : (
-                <img
-                  src={primaryAsset.url}
-                  alt="Generated creative"
-                  className="result-media"
-                />
+                <div
+                  className="result-stage"
+                  data-aspect-ratio={previewAspectRatio}
+                >
+                  <img
+                    src={primaryAsset.url}
+                    alt="Generated creative"
+                    className="result-media"
+                  />
+                </div>
               )
             ) : (
-              <div className="result-placeholder">
+              <div
+                className={`result-placeholder ${isWorking ? 'is-loading' : ''}`}
+                data-aspect-ratio={previewAspectRatio}
+              >
                 <div>
-                  <span>Generated content will appear here</span>
+                  {isWorking ? <span className="loader-orb" aria-hidden="true" /> : null}
+                  <span>
+                    {isWorking
+                      ? 'Generating your creative...'
+                      : 'Generated content will appear here'}
+                  </span>
                   <small>
-                    The prompt now enforces language, premium pacing, and a stronger ad
-                    structure for nicer image and video outputs.
+                    {isWorking
+                      ? 'We are keeping the preview area stable while fal.ai renders the next asset.'
+                      : 'The prompt now enforces language, premium pacing, and a stronger ad structure for nicer image and video outputs.'}
                   </small>
                 </div>
               </div>
@@ -843,6 +929,98 @@ function App() {
           </div>
         </section>
       </main>
+
+      <section className="panel history-panel">
+        <div className="section-heading">
+          <p className="section-kicker">4. Project history</p>
+          <h2>View, reopen, and download past generations.</h2>
+        </div>
+
+        {historyError ? <p className="error-banner">{historyError}</p> : null}
+
+        {historyItems.length ? (
+          <div className="history-grid">
+            {historyItems.map((item) => {
+              const previewAsset = item.assets[0]
+              return (
+                <article key={item.id} className="history-card">
+                  <div className="history-meta">
+                    <strong>{item.product_name}</strong>
+                    <small>{formatHistoryTimestamp(item.created_at)}</small>
+                  </div>
+                  <div className="brief-meta">
+                    <span>{item.content_type.toUpperCase()}</span>
+                    <span>{item.language.toUpperCase()}</span>
+                    <span>{item.status.toUpperCase()}</span>
+                  </div>
+
+                  {previewAsset ? (
+                    item.content_type === 'video' ? (
+                      <div
+                        className="history-preview"
+                        data-aspect-ratio={item.aspect_ratio || '9:16'}
+                      >
+                        <video
+                          className="history-media"
+                          src={previewAsset.url}
+                          controls
+                          preload="metadata"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className="history-preview"
+                        data-aspect-ratio={item.aspect_ratio || '1:1'}
+                      >
+                        <img
+                          className="history-media"
+                          src={previewAsset.url}
+                          alt={`${item.product_name} history preview`}
+                        />
+                      </div>
+                    )
+                  ) : (
+                    <div
+                      className="history-preview history-empty"
+                      data-aspect-ratio={item.aspect_ratio || '1:1'}
+                    >
+                      <small>
+                        {item.status === 'failed'
+                          ? item.error_message || 'Generation failed.'
+                          : 'Result preview will appear here once the job finishes.'}
+                      </small>
+                    </div>
+                  )}
+
+                  <p className="history-prompt">{item.prompt}</p>
+                  <div className="history-actions">
+                    {previewAsset ? (
+                      <>
+                        <a href={previewAsset.url} target="_blank" rel="noreferrer">
+                          View
+                        </a>
+                        <a href={previewAsset.url} download>
+                          Download
+                        </a>
+                      </>
+                    ) : (
+                      <span className="muted">No asset yet</span>
+                    )}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="history-empty-state">
+            <span>No projects yet</span>
+            <small>
+              Your finished image and video generations will show up here with direct
+              view and download links.
+            </small>
+          </div>
+        )}
+      </section>
     </div>
   )
 }

@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from rest_framework.authtoken.models import Token
 
+from creator.models import GenerationRecord
 from creator.prompting import build_generation_prompt
 
 
@@ -24,17 +25,19 @@ class PromptingTests(SimpleTestCase):
             video_style="ugc",
             video_orientation="portrait",
             ugc_creator={
-                "name": "High-Energy Founder",
+                "name": "Assertive Founder",
                 "description": "Confident creator persona.",
                 "persona_prompt": "Speak directly and confidently.",
             },
             has_reference_images=True,
+            include_audio=True,
         )
 
         self.assertIn("Preserve the exact packaging", prompt)
         self.assertIn("creator-made UGC", prompt)
-        self.assertIn("High-Energy Founder", prompt)
+        self.assertIn("Assertive Founder", prompt)
         self.assertIn("Slovenian", prompt)
+        self.assertIn("clear native Slovenian speech", prompt)
 
 
 class ApiTests(TestCase):
@@ -105,3 +108,25 @@ class ApiTests(TestCase):
         payload = response.json()
         self.assertIn("languages", payload["generation_options"])
         self.assertIn("videoOrientations", payload["generation_options"])
+
+    def test_history_endpoint_returns_user_generations(self):
+        GenerationRecord.objects.create(
+            user=self.user,
+            job_token="job-123",
+            model_id="fal-ai/nano-banana-pro",
+            model_label="Nano Banana Pro",
+            product_id="coffee-2-0",
+            product_name="Coffee 2.0",
+            content_type="image",
+            language="en",
+            prompt="A bright premium coffee ad.",
+            status="completed",
+            assets=[{"url": "https://example.com/image.webp"}],
+        )
+
+        response = self.client.get("/api/history/", **self.auth_headers)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["product_name"], "Coffee 2.0")

@@ -471,16 +471,64 @@ textarea:focus,
   min-height: 360px;
 }
 
-.result-media,
-.result-placeholder {
+.result-stage,
+.result-placeholder,
+.history-preview,
+.history-empty-state {
   width: 100%;
-  min-height: 300px;
   border-radius: 22px;
+  overflow: hidden;
+}
+
+.result-stage,
+.result-placeholder,
+.history-preview {
+  min-height: 300px;
+}
+
+.result-stage[data-aspect-ratio='1:1'],
+.result-placeholder[data-aspect-ratio='1:1'],
+.history-preview[data-aspect-ratio='1:1'] {
+  aspect-ratio: 1 / 1;
+}
+
+.result-stage[data-aspect-ratio='4:5'],
+.result-placeholder[data-aspect-ratio='4:5'],
+.history-preview[data-aspect-ratio='4:5'] {
+  aspect-ratio: 4 / 5;
+}
+
+.result-stage[data-aspect-ratio='16:9'],
+.result-placeholder[data-aspect-ratio='16:9'],
+.history-preview[data-aspect-ratio='16:9'] {
+  aspect-ratio: 16 / 9;
+}
+
+.result-stage[data-aspect-ratio='9:16'],
+.result-placeholder[data-aspect-ratio='9:16'],
+.history-preview[data-aspect-ratio='9:16'] {
+  aspect-ratio: 9 / 16;
 }
 
 .result-media {
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
   object-fit: cover;
   background: linear-gradient(180deg, #f7ebe1, #fefbf7);
+}
+
+.result-stage {
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(135deg, rgba(252, 214, 189, 0.24), rgba(255, 255, 255, 0.94)),
+    #fff;
+}
+
+.result-stage .result-media,
+.history-media {
+  object-fit: contain;
 }
 
 .result-placeholder {
@@ -495,11 +543,30 @@ textarea:focus,
     #fff;
 }
 
+.result-placeholder.is-loading {
+  background:
+    radial-gradient(circle at top, rgba(142, 98, 68, 0.16), transparent 38%),
+    linear-gradient(135deg, rgba(252, 214, 189, 0.28), rgba(255, 255, 255, 0.92)),
+    #fff;
+}
+
 .result-placeholder span {
   display: block;
   font-family: var(--heading);
   color: var(--heading-color);
   margin-bottom: 8px;
+}
+
+.loader-orb {
+  display: inline-block;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 16px;
+  border-radius: 999px;
+  border: 4px solid rgba(142, 98, 68, 0.14);
+  border-top-color: #8e6244;
+  border-right-color: #3d2d26;
+  animation: spin 0.85s linear infinite;
 }
 
 .asset-strip a {
@@ -533,6 +600,100 @@ textarea:focus,
   margin-top: 14px;
 }
 
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.history-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(61, 45, 38, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.history-meta,
+.history-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.history-meta small,
+.history-prompt,
+.history-empty small,
+.history-empty-state small {
+  color: var(--muted);
+}
+
+.history-preview {
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(135deg, rgba(252, 214, 189, 0.22), rgba(255, 255, 255, 0.94)),
+    #fff;
+}
+
+.history-media {
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+}
+
+.history-empty {
+  border: 1px dashed rgba(61, 45, 38, 0.14);
+  padding: 18px;
+  text-align: center;
+}
+
+.history-prompt {
+  margin: 0;
+  font-size: 0.94rem;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  line-clamp: 3;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.history-actions a {
+  text-decoration: none;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(61, 45, 38, 0.12);
+  background: #fff;
+  color: var(--heading-color);
+}
+
+.history-empty-state {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 28px;
+  border: 1px dashed rgba(61, 45, 38, 0.14);
+  background:
+    linear-gradient(135deg, rgba(252, 214, 189, 0.22), rgba(255, 255, 255, 0.94)),
+    #fff;
+}
+
+.history-empty-state span {
+  display: block;
+  font-family: var(--heading);
+  color: var(--heading-color);
+  margin-bottom: 8px;
+}
+
 @keyframes float {
   0%,
   100% {
@@ -541,6 +702,12 @@ textarea:focus,
 
   50% {
     transform: translate3d(0, -10px, 0) scale(1.04);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

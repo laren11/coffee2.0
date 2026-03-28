@@ -1,6 +1,7 @@
 import type {
   AuthResponse,
   CatalogResponse,
+  GenerationHistoryResponse,
   GenerationStatusResponse,
   SubmitGenerationPayload,
   SubmitGenerationResponse,
@@ -100,6 +101,22 @@ function ensureCatalogPayload(
   throw new ApiError(fallbackMessage, 500)
 }
 
+function ensureHistoryPayload(
+  payload: unknown,
+  fallbackMessage: string,
+): GenerationHistoryResponse {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'items' in payload &&
+    Array.isArray(payload.items)
+  ) {
+    return payload as GenerationHistoryResponse
+  }
+
+  throw new ApiError(fallbackMessage, 500)
+}
+
 export function getStoredToken() {
   return window.localStorage.getItem(AUTH_STORAGE_KEY) || ''
 }
@@ -146,6 +163,17 @@ export async function fetchCatalog(token: string): Promise<CatalogResponse> {
   return ensureCatalogPayload(
     data,
     'The catalog endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
+  )
+}
+
+export async function fetchHistory(token: string): Promise<GenerationHistoryResponse> {
+  const response = await fetch(`${API_BASE}/history/`, {
+    headers: buildAuthHeaders(token),
+  })
+  const data = await parseResponse<unknown>(response)
+  return ensureHistoryPayload(
+    data,
+    'The history endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
   )
 }
 
