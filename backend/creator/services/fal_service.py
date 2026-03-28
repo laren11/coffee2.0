@@ -14,9 +14,9 @@ from fal_client.client import Completed, InProgress, Queued
 from creator.assets import list_product_reference_files, list_ugc_creator_reference_files
 from creator.catalog import PRODUCTS_BY_ID, UGC_CREATORS_BY_ID
 from creator.prompting import (
-    build_cinematic_keyframe_prompt,
     build_generation_prompt,
     build_negative_prompt,
+    build_video_starter_frame_prompt,
 )
 
 
@@ -143,9 +143,7 @@ def _select_model(
             return REFERENCE_IMAGE_MODEL, "Nano Banana Pro Edit"
         return TEXT_IMAGE_MODEL, "Nano Banana Pro"
 
-    if reference_count:
-        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
-    return TEXT_VIDEO_MODEL, "Veo 3.1 Fast Text-to-Video"
+    return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
 
 
 def _model_label_for_id(model_id: str) -> str:
@@ -158,31 +156,47 @@ def _model_label_for_id(model_id: str) -> str:
     }[model_id]
 
 
-def _choose_ugc_anchor_image_url(reference_assets: ReferenceAssets) -> str:
-    if reference_assets.uploaded:
-        return reference_assets.uploaded[0]
-    if reference_assets.creator:
-        return reference_assets.creator[0]
-    if reference_assets.product:
-        return reference_assets.product[0]
-    return ""
+def _starter_frame_reference_uris(
+    *,
+    video_style: str,
+    reference_assets: ReferenceAssets,
+) -> list[str]:
+    ordered = list(reference_assets.uploaded)
+    if video_style == "ugc":
+        ordered.extend(reference_assets.creator)
+        ordered.extend(reference_assets.product)
+    else:
+        ordered.extend(reference_assets.product)
+        ordered.extend(reference_assets.creator)
+    return ordered[:MAX_REFERENCE_IMAGES]
 
 
-def _generate_cinematic_keyframe_url(
+def _generate_video_starter_frame_url(
     *,
     product_id: str,
     prompt: str,
     language: str,
+    video_style: str,
     video_orientation: str,
-    reference_data_uris: list[str],
+    ugc_creator_id: str,
+    include_audio: bool,
+    reference_assets: ReferenceAssets,
 ) -> str:
     product = PRODUCTS_BY_ID[product_id]
-    prompt_text = build_cinematic_keyframe_prompt(
+    ugc_creator = UGC_CREATORS_BY_ID.get(ugc_creator_id or "")
+    starter_frame_reference_uris = _starter_frame_reference_uris(
+        video_style=video_style,
+        reference_assets=reference_assets,
+    )
+    prompt_text = build_video_starter_frame_prompt(
         product=product,
         user_prompt=prompt,
         language=language,
+        video_style=video_style,
         video_orientation=video_orientation,
-        has_reference_images=bool(reference_data_uris),
+        ugc_creator=ugc_creator,
+        has_reference_images=bool(starter_frame_reference_uris),
+        include_audio=include_audio,
     )
     arguments: dict[str, Any] = {
         "prompt": prompt_text,
@@ -191,22 +205,22 @@ def _generate_cinematic_keyframe_url(
         "num_images": 1,
     }
     model_id = TEXT_IMAGE_MODEL
-    if reference_data_uris:
+    if starter_frame_reference_uris:
         model_id = REFERENCE_IMAGE_MODEL
-        arguments["image_urls"] = reference_data_uris
+        arguments["image_urls"] = starter_frame_reference_uris
         arguments["limit_generations"] = True
 
     try:
         result = fal_client.subscribe(model_id, arguments)
     except Exception as exc:  # pragma: no cover - network/provider failure
         raise FalSubmissionError(
-            "Unable to prepare the cinematic opening frame for the ad video."
+            "Unable to prepare the opening frame for the video."
         ) from exc
 
     images = result.get("images", [])
     if not images or not images[0].get("url"):
         raise FalSubmissionError(
-            "fal.ai did not return a usable cinematic opening frame for the ad video."
+            "fal.ai did not return a usable starter frame for the video."
         )
     return images[0]["url"]
 
@@ -238,7 +252,7 @@ def _build_arguments(
         video_style=video_style or "ad",
     )
     has_reference_images = bool(reference_data_uris)
-    used_cinematic_opening_keyframe = False
+    used_generated_starter_frame = False
 
     full_prompt = build_generation_prompt(
         product=product,
@@ -263,7 +277,7 @@ def _build_arguments(
         if has_reference_images:
             arguments["image_urls"] = reference_data_uris
             arguments["limit_generations"] = True
-        return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
+        return model_id, arguments, has_reference_images, used_generated_starter_frame
 
     arguments = {
         "prompt": full_prompt,
@@ -275,27 +289,19 @@ def _build_arguments(
         "auto_fix": True,
     }
 
-    if model_id == TEXT_VIDEO_MODEL:
-        return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
-
-    if model_id == IMAGE_TO_VIDEO_MODEL:
-        image_url = reference_data_uris[0] if reference_data_uris else ""
-        if content_type == "video" and video_style == "ad":
-            image_url = _generate_cinematic_keyframe_url(
-                product_id=product_id,
-                prompt=prompt,
-                language=language,
-                video_orientation=video_orientation or "portrait",
-                reference_data_uris=reference_data_uris,
-            )
-            used_cinematic_opening_keyframe = True
-        elif content_type == "video" and video_style == "ugc":
-            image_url = _choose_ugc_anchor_image_url(reference_assets)
-        arguments["image_url"] = image_url
-        return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
-
-    arguments["image_urls"] = reference_data_uris
-    return model_id, arguments, has_reference_images, used_cinematic_opening_keyframe
+    starter_frame_url = _generate_video_starter_frame_url(
+        product_id=product_id,
+        prompt=prompt,
+        language=language,
+        video_style=video_style or "ad",
+        video_orientation=video_orientation or "portrait",
+        ugc_creator_id=ugc_creator_id,
+        include_audio=include_audio,
+        reference_assets=reference_assets,
+    )
+    used_generated_starter_frame = True
+    arguments["image_url"] = starter_frame_url
+    return model_id, arguments, has_reference_images, used_generated_starter_frame
 
 
 def submit_generation(
@@ -312,7 +318,7 @@ def submit_generation(
     reference_images: list,
 ) -> SubmissionResult:
     _ensure_fal_key()
-    model_id, arguments, used_reference_images, used_cinematic_opening_keyframe = (
+    model_id, arguments, used_reference_images, used_generated_starter_frame = (
         _build_arguments(
             product_id=product_id,
             content_type=content_type,
@@ -336,7 +342,7 @@ def submit_generation(
     guidance_chunks = []
     if content_type == "video":
         guidance_chunks.append(
-            "Video generation now uses the faster Veo 3.1 Fast pipeline for quicker turnaround."
+            "Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot."
         )
     if used_reference_images:
         guidance_chunks.append(
@@ -346,11 +352,15 @@ def submit_generation(
         guidance_chunks.append(
             "No reference photos were available, so the result may drift from the exact real-world packaging."
         )
-    if used_cinematic_opening_keyframe:
+    if used_generated_starter_frame:
         guidance_chunks.append(
-            "This ad video uses a generated cinematic opening frame, so it should not start on the flat raw packshot."
+            "The video should open on a generated scene frame instead of the untouched uploaded packshot."
         )
-    if content_type == "video" and include_audio:
+    if content_type == "video" and video_style == "ugc":
+        guidance_chunks.append(
+            "UGC audio is locked on and the prompt keeps the creator speaking in the selected language."
+        )
+    elif content_type == "video" and include_audio:
         guidance_chunks.append(
             "Audio generation is enabled, but the cleanest ad voiceovers still usually come from a separate dedicated voice tool."
         )

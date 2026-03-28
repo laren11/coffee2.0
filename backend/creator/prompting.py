@@ -134,16 +134,18 @@ def build_generation_prompt(
         if include_audio:
             if resolved_video_style == "ugc":
                 audio_block = (
-                    f"Generate clear native {_language_label(language)} speech from one "
-                    "speaker with clean diction, believable pacing, short punchy lines, low "
-                    "background noise, and intelligible words. The talking should feel like a "
-                    "real creator speaking naturally to camera."
+                    f"Audio is required. Generate clear native {_language_label(language)} "
+                    "speech only from one speaker with clean diction, believable pacing, "
+                    "short punchy lines, low background noise, and fully intelligible words. "
+                    "Do not switch to English or mix languages unless English was selected. "
+                    "The talking should feel like a real creator speaking naturally to camera "
+                    "with accurate lip sync and confident delivery."
                 )
             else:
                 audio_block = (
                     f"If speech is present, use clear native {_language_label(language)} "
                     "voiceover or on-camera dialogue with clean studio-like intelligibility, "
-                    "subtle ambient sound, and premium ad polish."
+                    "subtle ambient sound, premium ad polish, and no accidental language drift."
                 )
         else:
             audio_block = (
@@ -208,6 +210,82 @@ def build_negative_prompt(video_style: str | None) -> str:
     return ", ".join(generic)
 
 
+def build_video_starter_frame_prompt(
+    *,
+    product: dict[str, Any],
+    user_prompt: str,
+    language: str,
+    video_style: str,
+    video_orientation: str | None,
+    ugc_creator: dict[str, Any] | None,
+    has_reference_images: bool,
+    include_audio: bool,
+) -> str:
+    reference_block = (
+        "Use the reference images only to preserve the exact real packaging, product identity, "
+        "and any creator likeness the user has rights to use."
+        if has_reference_images
+        else "Keep the product premium and believable within the Coffee 2.0 brand world."
+    )
+    if video_style == "ugc":
+        creator_block = ""
+        if ugc_creator:
+            creator_block = (
+                f"Creator preset: {ugc_creator['name']}. "
+                f"{ugc_creator['description']} "
+                f"{ugc_creator['persona_prompt']} "
+                "If creator reference photos are present, keep the subject consistent with them."
+            )
+        speech_block = (
+            f"Design the frame as the believable split-second before the creator starts "
+            f"speaking in {_language_label(language)} with direct eye contact, relaxed mouth, "
+            "natural posture, and room for the video to open into clear dialogue."
+            if include_audio
+            else "Design the frame as a believable creator moment with natural eye line and "
+            "social-native body language."
+        )
+        style_block = (
+            "Create a single ultra-realistic opening frame for a creator-made UGC ad. "
+            "Use smartphone-native framing, natural light, a believable home, office, gym, "
+            "kitchen, or lifestyle environment, and subtle handheld realism without looking messy."
+        )
+        product_block = (
+            "The product should be present naturally in-hand, on a counter, on a desk, or being "
+            "introduced into the scene, not as a flat centered packshot."
+        )
+    else:
+        creator_block = ""
+        speech_block = (
+            f"If speech or voiceover is implied later, the visual setup should still feel native "
+            f"to {_language_label(language)}."
+        )
+        style_block = (
+            f"Create a single ultra-realistic opening frame for a premium {product['name']} ad. "
+            "Use cinematic composition, premium lighting, depth, foreground layering, and "
+            "in-scene storytelling that feels photographed rather than rendered."
+        )
+        product_block = (
+            "The product should be integrated into the environment or motion setup naturally, "
+            "not staged as a plain background catalog packshot."
+        )
+
+    return " ".join(
+        [
+            style_block,
+            reference_block,
+            product_block,
+            VIDEO_ORIENTATION_GUIDANCE.get(video_orientation or "portrait", ""),
+            speech_block,
+            creator_block,
+            "Avoid a flat centered packshot, plain background, generic AI glamor shot, or any "
+            "frame that feels like the untouched uploaded reference image.",
+            "The frame should feel premium, believable, ad-ready, and strong enough to serve as "
+            "the first moment before camera motion begins.",
+            f"Creative brief from the user: {user_prompt.strip()}",
+        ]
+    )
+
+
 def build_cinematic_keyframe_prompt(
     *,
     product: dict[str, Any],
@@ -216,22 +294,13 @@ def build_cinematic_keyframe_prompt(
     video_orientation: str | None,
     has_reference_images: bool,
 ) -> str:
-    reference_block = (
-        "Use the reference images only to preserve packaging fidelity and product identity."
-        if has_reference_images
-        else "Keep the product premium and believable within the Coffee 2.0 brand world."
-    )
-    return " ".join(
-        [
-            f"Create a single cinematic opening frame for a premium {product['name']} ad.",
-            reference_block,
-            "Do not create a centered static packshot on a plain background.",
-            "Show the product inside a realistic in-scene moment with premium lighting, depth, "
-            "foreground interest, and strong cinematic composition.",
-            VIDEO_ORIENTATION_GUIDANCE.get(video_orientation or "portrait", ""),
-            f"Any visible text or spoken context implied by the scene should align with {_language_label(language)}.",
-            "The frame should feel expensive, realistic, ad-ready, and suitable as the first "
-            "shot of a high-converting commercial.",
-            f"Creative brief from the user: {user_prompt.strip()}",
-        ]
+    return build_video_starter_frame_prompt(
+        product=product,
+        user_prompt=user_prompt,
+        language=language,
+        video_style="ad",
+        video_orientation=video_orientation,
+        ugc_creator=None,
+        has_reference_images=has_reference_images,
+        include_audio=False,
     )

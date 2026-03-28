@@ -84,6 +84,8 @@ class GenerationRequestSerializer(serializers.Serializer):
                 )
             if video_style == "ugc" and not ugc_creator_id:
                 attrs["ugc_creator_id"] = UGC_CREATOR_IDS[0]
+            if video_style == "ugc":
+                attrs["include_audio"] = True
         else:
             attrs["ugc_creator_id"] = ""
 

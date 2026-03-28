@@ -5,7 +5,8 @@ from django.test import SimpleTestCase, TestCase
 from rest_framework.authtoken.models import Token
 
 from creator.models import GenerationRecord
-from creator.prompting import build_generation_prompt
+from creator.prompting import build_generation_prompt, build_video_starter_frame_prompt
+from creator.services.fal_service import IMAGE_TO_VIDEO_MODEL, _build_arguments
 
 
 class PromptingTests(SimpleTestCase):
@@ -38,6 +39,61 @@ class PromptingTests(SimpleTestCase):
         self.assertIn("Founder", prompt)
         self.assertIn("Slovenian", prompt)
         self.assertIn("clear native Slovenian speech", prompt)
+
+    def test_starter_frame_prompt_matches_ugc_language_and_tone(self):
+        prompt = build_video_starter_frame_prompt(
+            product={
+                "name": "Coffee 2.0",
+                "tagline": "Focus and clean energy.",
+                "description": "Premium functional coffee.",
+                "benefits": ["adaptogens", "mushrooms"],
+                "creative_angles": ["desk focus"],
+                "base_prompt": "Make the product the hero.",
+            },
+            user_prompt="Founder-style direct-to-camera hook in a modern office.",
+            language="de",
+            video_style="ugc",
+            video_orientation="portrait",
+            ugc_creator={
+                "name": "Founder",
+                "description": "Confident creator persona.",
+                "persona_prompt": "Speak directly and confidently.",
+            },
+            has_reference_images=True,
+            include_audio=True,
+        )
+
+        self.assertIn("creator-made UGC ad", prompt)
+        self.assertIn("Founder", prompt)
+        self.assertIn("German", prompt)
+        self.assertIn("before the creator starts speaking", prompt)
+
+
+class FalServiceTests(SimpleTestCase):
+    @patch("creator.services.fal_service._generate_video_starter_frame_url")
+    def test_video_arguments_use_generated_starter_frame(self, starter_frame_mock):
+        starter_frame_mock.return_value = "https://example.com/starter-frame.webp"
+
+        model_id, arguments, has_reference_images, used_generated_starter_frame = (
+            _build_arguments(
+                product_id="coffee-2-0",
+                content_type="video",
+                prompt="Create a cinematic performance ad.",
+                language="en",
+                aspect_ratio="16:9",
+                video_style="ad",
+                video_orientation="landscape",
+                ugc_creator_id="",
+                include_audio=False,
+                reference_images=[],
+            )
+        )
+
+        self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
+        self.assertEqual(arguments["image_url"], starter_frame_mock.return_value)
+        self.assertIsInstance(has_reference_images, bool)
+        self.assertTrue(used_generated_starter_frame)
+        starter_frame_mock.assert_called_once()
 
 
 class ApiTests(TestCase):
@@ -110,6 +166,7 @@ class ApiTests(TestCase):
         self.assertEqual(
             submit_generation_mock.call_args.kwargs["ugc_creator_id"], "founder"
         )
+        self.assertTrue(submit_generation_mock.call_args.kwargs["include_audio"])
 
     @patch("creator.views.fetch_generation_status")
     def test_status_endpoint_returns_completed_payload(self, status_mock):

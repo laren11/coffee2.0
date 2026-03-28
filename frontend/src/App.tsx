@@ -51,6 +51,11 @@ type ActiveJob = {
   usedReferenceImages: boolean
 }
 
+type PromptRecipe = {
+  label: string
+  text: string
+}
+
 const FALLBACK_CATALOG: CatalogResponse = {
   products: [],
   generation_options: {
@@ -93,6 +98,98 @@ const FALLBACK_CATALOG: CatalogResponse = {
   },
 }
 
+function buildPromptRecipes(
+  product: Product | undefined,
+  contentType: ContentType,
+  videoStyle: '' | 'ugc' | 'ad',
+  languageLabel: string,
+): PromptRecipe[] {
+  const productName = product?.name || 'Coffee 2.0'
+  const firstBenefit = product?.benefits[0] || 'clear premium product benefits'
+
+  if (contentType === 'image') {
+    return [
+      {
+        label: 'Hero still',
+        text: `Create a premium ${languageLabel} image ad for ${productName} with editorial lighting, tactile packaging detail, one bold benefit focus on ${firstBenefit}, and a clean luxury wellness finish.`,
+      },
+      {
+        label: 'Lifestyle still',
+        text: `Create a realistic lifestyle image for ${productName} in a believable wellness setting with premium natural light, in-hand product interaction, and a subtle high-converting CTA mood in ${languageLabel}.`,
+      },
+      {
+        label: 'Launch poster',
+        text: `Create a launch-day key visual for ${productName} that feels photographed, premium, modern, and social-first, with bold composition, rich texture, and one unforgettable product hero angle in ${languageLabel}.`,
+      },
+    ]
+  }
+
+  if (videoStyle === 'ugc') {
+    return [
+      {
+        label: 'Fast testimonial',
+        text: `Create a ${languageLabel} UGC testimonial for ${productName} with a sharp 2-second hook, founder energy, direct eye contact, believable speech, one practical proof moment, and a confident social-native finish.`,
+      },
+      {
+        label: 'Routine reveal',
+        text: `Create a ${languageLabel} UGC routine video for ${productName} showing how it fits into a real morning or performance routine, with natural product handling, conversational delivery, and one strong why-this-works line.`,
+      },
+      {
+        label: 'Objection breaker',
+        text: `Create a ${languageLabel} UGC ad for ${productName} that starts with a skeptical hook, breaks one common objection, shows the product naturally, and ends with a persuasive recommendation that feels authentic.`,
+      },
+    ]
+  }
+
+  return [
+    {
+      label: 'Cinematic hook',
+      text: `Create a premium ${languageLabel} cinematic ad for ${productName} with an in-scene opening hook, elegant camera movement, persuasive product proof, beautiful lighting, and a clean final hero moment.`,
+    },
+    {
+      label: 'Performance film',
+      text: `Create a realistic ${languageLabel} commercial for ${productName} with cinematic motion, tactile closeups, aspirational lifestyle cutaways, product credibility, and a premium direct-response ending.`,
+    },
+    {
+      label: 'Luxury social spot',
+      text: `Create a luxury-feeling ${languageLabel} paid social ad for ${productName} with premium pacing, polished movement, believable environments, and a memorable final frame designed to convert.`,
+    },
+  ]
+}
+
+function calculateCreativeStreak(items: GenerationHistoryItem[]) {
+  const completedDates = Array.from(
+    new Set(
+      items
+        .filter((item) => item.status === 'completed')
+        .map((item) => new Date(item.created_at).toISOString().slice(0, 10)),
+    ),
+  ).sort()
+
+  if (!completedDates.length) {
+    return 0
+  }
+
+  let streak = 1
+  let cursor = new Date(`${completedDates[completedDates.length - 1]}T00:00:00`)
+
+  for (let index = completedDates.length - 2; index >= 0; index -= 1) {
+    const previous = new Date(`${completedDates[index]}T00:00:00`)
+    const diffDays = Math.round(
+      (cursor.getTime() - previous.getTime()) / (1000 * 60 * 60 * 24),
+    )
+
+    if (diffDays !== 1) {
+      break
+    }
+
+    streak += 1
+    cursor = previous
+  }
+
+  return streak
+}
+
 function App() {
   const [authPhase, setAuthPhase] = useState<AuthPhase>('checking')
   const [authToken, setAuthToken] = useState(() => getStoredToken())
@@ -127,6 +224,10 @@ function App() {
   const [statusLogs, setStatusLogs] = useState<string[]>([])
   const [resultDescription, setResultDescription] = useState('')
   const [generatedAssets, setGeneratedAssets] = useState<GeneratedAsset[]>([])
+  const [surpriseHint, setSurpriseHint] = useState('')
+  const [brewModeEnabled, setBrewModeEnabled] = useState(false)
+  const [brewToastVisible, setBrewToastVisible] = useState(false)
+  const [showCompletionBurst, setShowCompletionBurst] = useState(false)
 
   const deferredPrompt = useDeferredValue(prompt)
   const selectedProduct = catalog.products.find(
@@ -145,6 +246,51 @@ function App() {
   const videoStyles = catalog.generation_options.videoStyles
   const languageOptions = catalog.generation_options.languages
   const videoOrientations = catalog.generation_options.videoOrientations
+  const promptRecipes = buildPromptRecipes(
+    selectedProduct,
+    contentType,
+    videoStyle,
+    selectedLanguageOption?.label || 'English',
+  )
+  const completedHistoryItems = historyItems.filter((item) => item.status === 'completed')
+  const completedCount = completedHistoryItems.length
+  const ugcWins = completedHistoryItems.filter((item) => item.video_style === 'ugc').length
+  const cinemaWins = completedHistoryItems.filter((item) => item.video_style === 'ad').length
+  const languageCount = new Set(completedHistoryItems.map((item) => item.language)).size
+  const creativeStreak = calculateCreativeStreak(historyItems)
+  const creativeScore =
+    completedCount * 40 +
+    ugcWins * 18 +
+    cinemaWins * 22 +
+    languageCount * 15 +
+    creativeStreak * 28
+  const achievementChips = [
+    {
+      label: 'First Brew',
+      unlocked: completedCount >= 1,
+      hint: 'Finish your first generation',
+    },
+    {
+      label: 'Triple Shot',
+      unlocked: completedCount >= 3,
+      hint: 'Ship three completed creatives',
+    },
+    {
+      label: 'UGC Machine',
+      unlocked: ugcWins >= 2,
+      hint: 'Complete two UGC videos',
+    },
+    {
+      label: 'Cinema Club',
+      unlocked: cinemaWins >= 2,
+      hint: 'Complete two ad videos',
+    },
+    {
+      label: 'Polyglot',
+      unlocked: languageCount >= 3,
+      hint: 'Generate in three languages',
+    },
+  ]
 
   const resetGenerationState = () => {
     setPhase('idle')
@@ -164,6 +310,9 @@ function App() {
     setHistoryItems([])
     setHistoryError('')
     setLoadingCatalog(false)
+    setSurpriseHint('')
+    setBrewToastVisible(false)
+    setShowCompletionBurst(false)
     resetGenerationState()
   })
 
@@ -302,6 +451,66 @@ function App() {
     }
   }, [imageAspectRatio, imageAspectRatios])
 
+  useEffect(() => {
+    if (contentType === 'video' && videoStyle === 'ugc' && !includeAudio) {
+      setIncludeAudio(true)
+    }
+  }, [contentType, includeAudio, videoStyle])
+
+  useEffect(() => {
+    let sequence = ''
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return
+      }
+
+      sequence = `${sequence}${event.key.toLowerCase()}`.slice(-4)
+      if (sequence === 'brew') {
+        setBrewModeEnabled((current) => !current)
+        setBrewToastVisible(true)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!brewToastVisible) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setBrewToastVisible(false)
+    }, 2200)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [brewToastVisible])
+
+  useEffect(() => {
+    if (!showCompletionBurst) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowCompletionBurst(false)
+    }, 1800)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [showCompletionBurst])
+
   const pollJob = useEffectEvent(async () => {
     if (!activeJob || !authToken) {
       return
@@ -343,6 +552,7 @@ function App() {
           setPhase('completed')
           setGeneratedAssets(status.assets || [])
           setResultDescription(status.description || '')
+          setShowCompletionBurst(true)
         }
       })
       if (shouldRefreshHistory) {
@@ -422,7 +632,7 @@ function App() {
           contentType === 'video'
             ? selectedVideoOrientation?.aspect_ratio || '9:16'
             : imageAspectRatio,
-        includeAudio,
+        includeAudio: contentType === 'video' && videoStyle === 'ugc' ? true : includeAudio,
         referenceImages,
       })
 
@@ -458,6 +668,12 @@ function App() {
     clearSession()
   }
 
+  const handleSurprisePrompt = () => {
+    const recipe = promptRecipes[Math.floor(Math.random() * promptRecipes.length)]
+    setPrompt(recipe.text)
+    setSurpriseHint(`Loaded "${recipe.label}"`)
+  }
+
   const formatHistoryTimestamp = (value: string) =>
     new Intl.DateTimeFormat(undefined, {
       dateStyle: 'medium',
@@ -470,6 +686,7 @@ function App() {
 
   const isWorking = phase === 'submitting' || phase === 'queued' || phase === 'processing'
   const needsUgcCreator = contentType === 'video' && videoStyle === 'ugc'
+  const isUgcAudioLocked = contentType === 'video' && videoStyle === 'ugc'
   const canSubmit =
     Boolean(selectedProductId && prompt.trim() && selectedLanguage) &&
     (contentType === 'image' || Boolean(videoOrientation)) &&
@@ -540,7 +757,11 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${brewModeEnabled ? 'brew-mode' : ''}`}>
+      {brewToastVisible ? (
+        <div className="brew-toast">Midnight Roast Mode unlocked</div>
+      ) : null}
+
       <div className="topbar">
         <span className="topbar-user">Signed in as {currentUsername}</span>
         <button type="button" className="logout-button" onClick={handleLogout}>
@@ -567,6 +788,38 @@ function App() {
           ))}
         </div>
       </header>
+
+      <section className="scoreboard-strip">
+        <article className="score-card">
+          <span className="mini-label">Creative Score</span>
+          <strong>{creativeScore}</strong>
+          <small>Built from completions, formats, languages, and streaks.</small>
+        </article>
+        <article className="score-card">
+          <span className="mini-label">Current Streak</span>
+          <strong>{creativeStreak} day{creativeStreak === 1 ? '' : 's'}</strong>
+          <small>Consecutive active creation days based on completed projects.</small>
+        </article>
+        <article className="score-card">
+          <span className="mini-label">Completed Shots</span>
+          <strong>{completedCount}</strong>
+          <small>{ugcWins} UGC wins, {cinemaWins} cinematic wins.</small>
+        </article>
+        <article className="score-card achievement-card">
+          <span className="mini-label">Achievements</span>
+          <div className="achievement-strip">
+            {achievementChips.map((chip) => (
+              <span
+                key={chip.label}
+                className={`achievement-chip ${chip.unlocked ? 'unlocked' : ''}`}
+                title={chip.hint}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
+        </article>
+      </section>
 
       <main className="workspace">
         <section className="panel catalog-panel">
@@ -753,27 +1006,39 @@ function App() {
             ) : null}
 
             {contentType === 'video' ? (
-              <label className="toggle-card">
+              <label className={`toggle-card ${isUgcAudioLocked ? 'locked' : ''}`}>
                 <input
                   type="checkbox"
-                  checked={includeAudio}
+                  checked={isUgcAudioLocked ? true : includeAudio}
+                  disabled={isUgcAudioLocked}
                   onChange={(event) => setIncludeAudio(event.target.checked)}
                 />
                 <span>
-                  <strong>Generate native video audio</strong>
+                  <strong>
+                    {isUgcAudioLocked ? 'UGC audio locked on' : 'Generate native video audio'}
+                  </strong>
                   <small>
-                    Best for spoken UGC and language testing. For the cleanest final ad
-                    voiceovers, you may still want to replace it later with a dedicated
-                    voice tool.
+                    {isUgcAudioLocked
+                      ? 'UGC videos always render with speech enabled in the selected language, and the pipeline now creates a realistic starter frame before animating it.'
+                      : 'Optional for cinematic ads. Turn it on when you want native dialogue or voiceover, but final premium voiceovers may still be cleaner from a dedicated voice tool.'}
                   </small>
                 </span>
               </label>
             ) : null}
 
             <div className="field-block">
-              <label className="field-label" htmlFor="prompt">
-                Custom prompt
-              </label>
+              <div className="prompt-row">
+                <label className="field-label" htmlFor="prompt">
+                  Custom prompt
+                </label>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={handleSurprisePrompt}
+                >
+                  Surprise me
+                </button>
+              </div>
               <textarea
                 id="prompt"
                 value={prompt}
@@ -784,8 +1049,10 @@ function App() {
               <p className="helper-text">
                 Your custom prompt is treated as a top-priority instruction in the final
                 generation prompt. Mention hook, setting, camera feel, spoken line, CTA,
-                and any shots you want to avoid.
+                and any shots you want to avoid. Video runs now generate a tailored starter
+                frame first, then animate it for a stronger opening shot.
               </p>
+              {surpriseHint ? <p className="surprise-hint">{surpriseHint}</p> : null}
             </div>
 
             <div className="field-block">
@@ -878,6 +1145,16 @@ function App() {
           </div>
 
           <div className="result-card">
+            {showCompletionBurst ? (
+              <div className="completion-burst" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+            ) : null}
             {primaryAsset ? (
               activeJob?.contentType === 'video' ? (
                 <div
