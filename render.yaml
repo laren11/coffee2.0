@@ -6,6 +6,7 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py ensure_default_user
     startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health/
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -18,15 +19,15 @@ services:
       - key: DJANGO_ALLOWED_HOSTS
         value: .onrender.com
       - key: DJANGO_CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://coffee-20-frontend.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
-        sync: false
+        value: https://coffee-20-frontend.onrender.com
       - key: FAL_KEY
         sync: false
       - key: DEFAULT_TEST_USERNAME
         value: coffee
       - key: DEFAULT_TEST_PASSWORD
-        sync: false
+        value: coffe20
 
   - name: coffee-20-frontend
     type: web
@@ -36,7 +37,7 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_BASE_URL
-        sync: false
+        value: https://coffee-20-api.onrender.com/api
     routes:
       - type: rewrite
         source: /*

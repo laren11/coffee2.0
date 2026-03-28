@@ -41,6 +41,46 @@ function buildAuthHeaders(token: string) {
   }
 }
 
+function ensureUserPayload(
+  payload: unknown,
+  fallbackMessage: string,
+): AuthResponse {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'token' in payload &&
+    typeof payload.token === 'string' &&
+    'user' in payload &&
+    typeof payload.user === 'object' &&
+    payload.user !== null &&
+    'username' in payload.user &&
+    typeof payload.user.username === 'string'
+  ) {
+    return payload as AuthResponse
+  }
+
+  throw new ApiError(fallbackMessage, 500)
+}
+
+function ensureMePayload(
+  payload: unknown,
+  fallbackMessage: string,
+): AuthResponse['user'] {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'user' in payload &&
+    typeof payload.user === 'object' &&
+    payload.user !== null &&
+    'username' in payload.user &&
+    typeof payload.user.username === 'string'
+  ) {
+    return (payload as { user: AuthResponse['user'] }).user
+  }
+
+  throw new ApiError(fallbackMessage, 500)
+}
+
 export function getStoredToken() {
   return window.localStorage.getItem(AUTH_STORAGE_KEY) || ''
 }
@@ -61,15 +101,22 @@ export async function login(username: string, password: string): Promise<AuthRes
     },
     body: JSON.stringify({ username, password }),
   })
-  return parseResponse<AuthResponse>(response)
+  const data = await parseResponse<unknown>(response)
+  return ensureUserPayload(
+    data,
+    'The login endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
+  )
 }
 
 export async function fetchMe(token: string): Promise<AuthResponse['user']> {
   const response = await fetch(`${API_BASE}/auth/me/`, {
     headers: buildAuthHeaders(token),
   })
-  const data = await parseResponse<{ user: AuthResponse['user'] }>(response)
-  return data.user
+  const data = await parseResponse<unknown>(response)
+  return ensureMePayload(
+    data,
+    'The auth session endpoint returned an unexpected response. Check VITE_API_BASE_URL on the frontend and redeploy it.',
+  )
 }
 
 export async function fetchCatalog(token: string): Promise<CatalogResponse> {
