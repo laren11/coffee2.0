@@ -5,7 +5,7 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && python manage.py ensure_default_user && python manage.py ensure_admin_user
-    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --timeout 180
     healthCheckPath: /api/health/
     envVars:
       - key: DATABASE_URL
@@ -22,6 +22,8 @@ services:
         value: https://coffee-20-frontend.onrender.com
       - key: DJANGO_CSRF_TRUSTED_ORIGINS
         value: https://coffee-20-frontend.onrender.com
+      - key: ENABLE_SYNC_VIDEO_STARTER_FRAME
+        value: "false"
       - key: FAL_KEY
         sync: false
       - key: DEFAULT_TEST_USERNAME

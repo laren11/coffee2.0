@@ -55,6 +55,15 @@ class ReferenceAssets:
     creator: list[str]
 
 
+def _sync_video_starter_frames_enabled() -> bool:
+    return os.getenv("ENABLE_SYNC_VIDEO_STARTER_FRAME", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _ensure_fal_key() -> None:
     if not os.getenv("FAL_KEY"):
         raise FalConfigurationError(
@@ -146,13 +155,18 @@ def _select_model(
     content_type: str,
     reference_count: int,
     video_style: str,
+    use_sync_starter_frame: bool,
 ) -> tuple[str, str]:
     if content_type == "image":
         if reference_count:
             return REFERENCE_IMAGE_MODEL, "Nano Banana Pro Edit"
         return TEXT_IMAGE_MODEL, "Nano Banana Pro"
 
-    return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
+    if use_sync_starter_frame:
+        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
+    if reference_count:
+        return IMAGE_TO_VIDEO_MODEL, "Veo 3.1 Fast Image-to-Video"
+    return TEXT_VIDEO_MODEL, "Veo 3.1 Fast Text-to-Video"
 
 
 def _model_label_for_id(model_id: str) -> str:
@@ -178,6 +192,18 @@ def _starter_frame_reference_uris(
         ordered.extend(reference_assets.product)
         ordered.extend(reference_assets.creator)
     return ordered[:MAX_REFERENCE_IMAGES]
+
+
+def _choose_video_anchor_image_url(
+    *,
+    video_style: str,
+    reference_assets: ReferenceAssets,
+) -> str:
+    ordered = _starter_frame_reference_uris(
+        video_style=video_style,
+        reference_assets=reference_assets,
+    )
+    return ordered[0] if ordered else ""
 
 
 def _extract_first_image_url(result: Any) -> str:
@@ -308,10 +334,14 @@ def _build_arguments(
         reference_images=reference_images,
     )
     reference_data_uris = reference_assets.combined
+    use_sync_starter_frame = (
+        content_type == "video" and _sync_video_starter_frames_enabled()
+    )
     model_id, _ = _select_model(
         content_type=content_type,
         reference_count=len(reference_data_uris),
         video_style=video_style or "ad",
+        use_sync_starter_frame=use_sync_starter_frame,
     )
     has_reference_images = bool(reference_data_uris)
     used_generated_starter_frame = False
@@ -351,18 +381,28 @@ def _build_arguments(
         "auto_fix": True,
     }
 
-    starter_frame_url = _generate_video_starter_frame_url(
-        product_ids=product_ids,
-        prompt=prompt,
-        language=language,
-        video_style=video_style or "ad",
-        video_orientation=video_orientation or "portrait",
-        ugc_creator_id=ugc_creator_id,
-        include_audio=include_audio,
-        reference_assets=reference_assets,
-    )
-    used_generated_starter_frame = True
-    arguments["image_url"] = starter_frame_url
+    if use_sync_starter_frame:
+        starter_frame_url = _generate_video_starter_frame_url(
+            product_ids=product_ids,
+            prompt=prompt,
+            language=language,
+            video_style=video_style or "ad",
+            video_orientation=video_orientation or "portrait",
+            ugc_creator_id=ugc_creator_id,
+            include_audio=include_audio,
+            reference_assets=reference_assets,
+        )
+        used_generated_starter_frame = True
+        arguments["image_url"] = starter_frame_url
+        return model_id, arguments, has_reference_images, used_generated_starter_frame
+
+    if model_id == IMAGE_TO_VIDEO_MODEL:
+        anchor_image_url = _choose_video_anchor_image_url(
+            video_style=video_style or "ad",
+            reference_assets=reference_assets,
+        )
+        if anchor_image_url:
+            arguments["image_url"] = anchor_image_url
     return model_id, arguments, has_reference_images, used_generated_starter_frame
 
 
@@ -410,9 +450,14 @@ def submit_generation(
 
     guidance_chunks = []
     if content_type == "video":
-        guidance_chunks.append(
-            "Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot."
-        )
+        if used_generated_starter_frame:
+            guidance_chunks.append(
+                "Video generation now builds a custom starter frame first and then animates it with Veo 3.1 Fast for a stronger opening shot."
+            )
+        else:
+            guidance_chunks.append(
+                "Video generation uses the faster direct Veo 3.1 Fast submission flow so the hosted app can return a job immediately and avoid request timeouts."
+            )
     if len(product_ids) > 1:
         guidance_chunks.append(
             "Multiple selected products were blended into one combined campaign prompt and shared visual setup."

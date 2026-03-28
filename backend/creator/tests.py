@@ -113,8 +113,11 @@ class PromptingTests(SimpleTestCase):
 
 
 class FalServiceTests(SimpleTestCase):
+    @patch("creator.services.fal_service._sync_video_starter_frames_enabled", return_value=True)
     @patch("creator.services.fal_service._generate_video_starter_frame_url")
-    def test_video_arguments_use_generated_starter_frame(self, starter_frame_mock):
+    def test_video_arguments_use_generated_starter_frame(
+        self, starter_frame_mock, sync_starter_frame_mock
+    ):
         starter_frame_mock.return_value = "https://example.com/starter-frame.webp"
 
         model_id, arguments, has_reference_images, used_generated_starter_frame = (
@@ -137,6 +140,32 @@ class FalServiceTests(SimpleTestCase):
         self.assertIsInstance(has_reference_images, bool)
         self.assertTrue(used_generated_starter_frame)
         starter_frame_mock.assert_called_once()
+        sync_starter_frame_mock.assert_called_once()
+
+    @patch("creator.services.fal_service._sync_video_starter_frames_enabled", return_value=False)
+    def test_video_arguments_default_to_non_blocking_submission(
+        self, sync_starter_frame_mock
+    ):
+        model_id, arguments, has_reference_images, used_generated_starter_frame = (
+            _build_arguments(
+                product_ids=["coffee-2-0"],
+                content_type="video",
+                prompt="Create a cinematic performance ad.",
+                language="en",
+                aspect_ratio="16:9",
+                video_style="ad",
+                video_orientation="landscape",
+                ugc_creator_id="",
+                include_audio=False,
+                reference_images=[],
+            )
+        )
+
+        self.assertEqual(model_id, IMAGE_TO_VIDEO_MODEL)
+        self.assertFalse(used_generated_starter_frame)
+        self.assertIn("image_url", arguments)
+        self.assertIsInstance(has_reference_images, bool)
+        sync_starter_frame_mock.assert_called_once()
 
     @patch("creator.services.fal_service._request_video_starter_frame")
     def test_video_starter_frame_falls_back_without_creator_refs(

@@ -642,6 +642,7 @@ function App() {
 
     setPhase('submitting')
     setSubmissionError('')
+    setActiveJob(null)
     setGeneratedAssets([])
     setResultDescription('')
     setStatusLogs([])
@@ -682,6 +683,7 @@ function App() {
         return
       }
       setPhase('failed')
+      setActiveJob(null)
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to submit generation job.',
       )
